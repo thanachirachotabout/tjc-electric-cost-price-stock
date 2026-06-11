@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TJC ELECTRIC | ต้นทุนสินค้า ราคา และสต็อก</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="src/cloud-config.js"></script>
+  <script src="src/image-data.js"></script>
+  <link rel="stylesheet" href="src/styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand-block">
+      <div class="brand-logo logo-mark" aria-hidden="true">TJC</div>
+      <div>
+        <p class="eyebrow">TJC ELECTRIC</p>
+        <h1>ต้นทุนสินค้า ราคา และสต็อก</h1>
+      </div>
+    </div>
+    <div class="header-actions">
+      <span id="cloudStatus" class="cloud-status offline">Local only</span>
+      <button id="cloudSettingsBtn" class="btn ghost" type="button">Cloud Sync</button>
+      <span id="saveStatus" class="save-status">พร้อมใช้งาน</span>
+    </div>
+  </header>
+
+  <nav class="tabs" aria-label="Main tabs">
+    <button class="tab active" type="button" data-tab="dashboard">Dashboard</button>
+    <button class="tab" type="button" data-tab="products">ต้นทุนสินค้า-ราคา</button>
+    <button class="tab" type="button" data-tab="sales">รายการขายและกำไร</button>
+    <button class="tab" type="button" data-tab="stock">สต็อก</button>
+  </nav>
+
+  <main>
+    <section id="dashboardTab" class="tab-panel active">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <button class="btn secondary" type="button" data-refresh-tab="dashboard">Refresh / Sync</button>
+        </div>
+      </div>
+      <div class="filter-bar">
+        <label>
+          ช่วงเวลา
+          <select id="dashPeriod">
+            <option value="all">ทั้งหมด</option>
+            <option value="day">รายวัน</option>
+            <option value="month">รายเดือน</option>
+            <option value="year">รายปี</option>
+          </select>
+        </label>
+        <label>
+          วันที่/เดือน/ปี
+          <input id="dashDate" type="date">
+        </label>
+        <label>
+          ชื่อสินค้า
+          <input id="dashProduct" type="search" placeholder="ค้นหาสินค้า">
+        </label>
+        <label>
+          คำสั่งซื้อ
+          <input id="dashOrder" type="search" placeholder="หมายเลขคำสั่งซื้อ">
+        </label>
+        <label>
+          แพลตฟอร์ม
+          <select id="dashPlatform"></select>
+        </label>
+      </div>
+
+      <div id="kpiGrid" class="kpi-grid"></div>
+
+      <div class="chart-grid">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>ยอดขายและกำไร</h2>
+          </div>
+          <canvas id="trendChart" height="240"></canvas>
+        </section>
+        <section class="panel">
+          <div class="panel-head">
+            <h2>กำไรตามสินค้า</h2>
+          </div>
+          <canvas id="productChart" height="240"></canvas>
+        </section>
+        <section class="panel">
+          <div class="panel-head">
+            <h2>สรุปตามแพลตฟอร์ม</h2>
+          </div>
+          <canvas id="platformChart" height="240"></canvas>
+        </section>
+      </div>
+
+      <section class="panel">
+        <div class="panel-head split">
+          <h2>ตารางสรุปรายการขาย</h2>
+          <span id="dashCount" class="muted"></span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>วันที่</th>
+                <th>แพลตฟอร์ม</th>
+                <th>คำสั่งซื้อ</th>
+                <th>สินค้า</th>
+                <th class="num">ยอดขาย</th>
+                <th class="num">ต้นทุน</th>
+                <th class="num">ค่าธรรมเนียม</th>
+                <th class="num">ส่วนลดผู้ขาย</th>
+                <th class="num">กำไร</th>
+              </tr>
+            </thead>
+            <tbody id="dashTable"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="productsTab" class="tab-panel">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <input id="productSearch" class="wide-input" type="search" placeholder="ค้นหาชื่อสินค้า ตัวเลือก สี หรือ SKU">
+          <button class="btn secondary" type="button" data-refresh-tab="products">Refresh / Sync</button>
+          <button id="downloadProductTemplateBtn" class="btn secondary" type="button">ดาวน์โหลด Template</button>
+          <button id="importProductsBtn" class="btn secondary" type="button">โหลดไฟล์ต้นทุนสินค้า-ราคา</button>
+          <button id="exportProductsBtn" class="btn secondary" type="button">ส่งออก Excel</button>
+        </div>
+        <button id="addProductBtn" class="btn primary" type="button">เพิ่มสินค้า</button>
+        <input id="productFile" type="file" accept=".xlsx,.xls,.xlsm" hidden>
+        <input id="productImageFileInput" type="file" accept="image/*" hidden>
+      </div>
+
+      <div id="productBulkBar" class="bulk-bar">
+        <strong><span id="productSelectedCount">0</span> รายการที่เลือก</strong>
+        <button id="bulkProductEditBtn" class="btn light" type="button">แก้ไขหลายรายการ</button>
+        <button id="bulkProductDeleteBtn" class="btn danger" type="button">ลบที่เลือก</button>
+        <button id="clearProductSelectionBtn" class="btn light" type="button">ยกเลิกเลือก</button>
+      </div>
+
+      <section class="panel">
+        <div class="panel-head split">
+          <h2>ต้นทุนสินค้า-ราคา</h2>
+          <span id="productCount" class="muted"></span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="check-col"><input id="productSelectAll" type="checkbox"></th>
+                <th>รูป</th>
+                <th>ชื่อสินค้า</th>
+                <th>ตัวเลือก</th>
+                <th>สี</th>
+                <th>SKU</th>
+                <th class="num">ราคาส่ง</th>
+                <th class="num">ค่าแพค</th>
+                <th class="num">รวมต้นทุน (VAT 7%)</th>
+                <th class="num">สต็อก</th>
+                <th>สถานะ</th>
+                <th class="actions-col">จัดการ</th>
+              </tr>
+            </thead>
+            <tbody id="productTable"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="salesTab" class="tab-panel">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <select id="activePlatform"></select>
+          <input id="salesSearch" class="wide-input" type="search" placeholder="ค้นหาสินค้า คำสั่งซื้อ หรือสถานะ">
+          <button class="btn secondary" type="button" data-refresh-tab="sales">Refresh / Sync</button>
+          <button id="importSalesBtn" class="btn secondary" type="button">โหลดไฟล์รายการขาย</button>
+          <button id="exportSalesBtn" class="btn secondary" type="button">ส่งออก Excel</button>
+        </div>
+        <button id="addSaleBtn" class="btn primary" type="button">เพิ่มรายการขาย</button>
+        <input id="salesFile" type="file" hidden>
+      </div>
+
+      <div class="platform-settings">
+        <label>
+          คอมมิชชั่น %
+          <input id="platformCommission" type="number" min="0" step="0.1">
+        </label>
+        <label>
+          ค่าบริการ %
+          <input id="platformService" type="number" min="0" step="0.1">
+        </label>
+        <label>
+          ค่าธุรกรรม %
+          <input id="platformTransaction" type="number" min="0" step="0.1">
+        </label>
+        <span id="platformRateTotal" class="rate-pill"></span>
+      </div>
+
+      <div id="salesBulkBar" class="bulk-bar">
+        <strong><span id="salesSelectedCount">0</span> รายการที่เลือก</strong>
+        <button id="bulkSalesEditBtn" class="btn light" type="button">แก้ไขหลายรายการ</button>
+        <button id="bulkSalesDeleteBtn" class="btn danger" type="button">ลบที่เลือก</button>
+        <button id="clearSalesSelectionBtn" class="btn light" type="button">ยกเลิกเลือก</button>
+      </div>
+
+      <section class="panel">
+        <div class="panel-head split">
+          <h2>รายการขายและกำไร</h2>
+          <span id="salesCount" class="muted"></span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="check-col"><input id="salesSelectAll" type="checkbox"></th>
+                <th>วันที่</th>
+                <th>แพลตฟอร์ม</th>
+                <th>คำสั่งซื้อ</th>
+                <th>สินค้า</th>
+                <th>จับคู่ต้นทุน</th>
+                <th class="num">ยอดขาย</th>
+                <th class="num">ค่าธรรมเนียม</th>
+                <th class="num">ส่วนลดผู้ขาย</th>
+                <th class="num">ต้นทุน</th>
+                <th class="num">กำไร</th>
+                <th>สถานะ</th>
+                <th class="actions-col">จัดการ</th>
+              </tr>
+            </thead>
+            <tbody id="salesTable"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="stockTab" class="tab-panel">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <input id="stockSearch" class="wide-input" type="search" placeholder="ค้นหาสินค้า SKU ตัวเลือก หรือสถานะ">
+          <select id="stockStatusFilter">
+            <option value="all">ทุกสถานะ</option>
+            <option value="in">มีสินค้า</option>
+            <option value="low">สต็อกต่ำ</option>
+            <option value="out">หมด</option>
+          </select>
+          <button class="btn secondary" type="button" data-refresh-tab="stock">Refresh / Sync</button>
+          <button id="exportStockBtn" class="btn secondary" type="button">ส่งออก Stock</button>
+        </div>
+        <button id="stockAdjustBtn" class="btn primary" type="button">ปรับสต็อก</button>
+      </div>
+
+      <div id="stockKpiGrid" class="kpi-grid stock-kpis"></div>
+
+      <section class="panel">
+        <div class="panel-head split">
+          <h2>สต็อกสินค้า</h2>
+          <span id="stockCount" class="muted"></span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>รูป</th>
+                <th>สินค้า</th>
+                <th>ตัวเลือก</th>
+                <th>สี</th>
+                <th>SKU</th>
+                <th class="num">สต็อก</th>
+                <th>สถานะ</th>
+                <th>มูลค่าต้นทุน</th>
+                <th class="actions-col">จัดการ</th>
+              </tr>
+            </thead>
+            <tbody id="stockTable"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="productDialog" class="modal">
+    <form method="dialog" id="productForm">
+      <h2 id="productDialogTitle">เพิ่มสินค้า</h2>
+      <div class="form-grid">
+        <div class="span-2 image-editor">
+          <div id="productImagePreview" class="image-preview"></div>
+          <div class="image-editor-fields">
+            <label>URL รูปภาพ <input id="productImageInput" placeholder="https://... หรือ assets/product-images/..."></label>
+            <div class="image-editor-actions">
+              <button id="productDialogImageBtn" class="btn light" type="button">เพิ่ม/เปลี่ยนรูป</button>
+              <button id="productDialogRemoveImageBtn" class="btn ghost" type="button">ลบรูป</button>
+            </div>
+          </div>
+        </div>
+        <label class="span-2">ชื่อสินค้า <input id="productNameInput" required></label>
+        <label>ตัวเลือก <input id="productOptionInput"></label>
+        <label>สี <input id="productColorInput"></label>
+        <label>SKU <input id="productSkuInput"></label>
+        <label>ราคาส่ง <input id="productWholesaleInput" type="number" min="0" step="0.01"></label>
+        <label>ค่าแพค <input id="productPackingInput" type="number" min="0" step="0.01"></label>
+        <label>รวมต้นทุน (VAT 7%) <input id="productTotalInput" type="number" readonly></label>
+        <label>สต็อก <input id="productStockInput" type="number" min="0" step="1"></label>
+        <label>สถานะ <input id="productStatusInput" placeholder="มีสินค้าพร้อมจำหน่าย"></label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" value="cancel" type="button" data-close="productDialog">ยกเลิก</button>
+        <button class="btn primary" type="submit">บันทึก</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="productBulkDialog" class="modal">
+    <form method="dialog" id="productBulkForm">
+      <h2>แก้ไขสินค้าหลายรายการ</h2>
+      <div class="form-grid">
+        <label>ปรับราคาส่ง <input id="bulkWholesaleInput" type="number" min="0" step="0.01" placeholder="เว้นว่างถ้าไม่แก้"></label>
+        <label>ปรับค่าแพค <input id="bulkPackingInput" type="number" min="0" step="0.01" placeholder="เว้นว่างถ้าไม่แก้"></label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" type="button" data-close="productBulkDialog">ยกเลิก</button>
+        <button class="btn primary" type="submit">บันทึก</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="productImportDialog" class="modal">
+    <form method="dialog" id="productImportForm">
+      <h2>โหลดไฟล์ต้นทุนสินค้า-ราคา</h2>
+      <div id="productImportModeStep">
+        <p class="modal-note">เลือกวิธีการนำเข้าข้อมูล:</p>
+        <div class="import-mode-grid">
+        <button class="import-mode-card active" type="button" data-product-import-mode="append">
+          <span class="import-icon">+</span>
+          <strong>เพิ่มข้อมูล</strong>
+          <span>เพิ่มรายการใหม่เข้ากับข้อมูลเดิม</span>
+        </button>
+        <button class="import-mode-card" type="button" data-product-import-mode="merge">
+          <span class="import-icon">↻</span>
+          <strong>รวมข้อมูล (SKU)</strong>
+          <span>อัปเดตรายการที่มี SKU ตรงกัน</span>
+        </button>
+        <button class="import-mode-card" type="button" data-product-import-mode="replace">
+          <span class="import-icon">↪</span>
+          <strong>แทนที่ทั้งหมด</strong>
+          <span>ลบข้อมูลเดิมและโหลดใหม่</span>
+        </button>
+        </div>
+        <p class="modal-note">ไฟล์ต้องมีคอลัมน์: ชื่อสินค้า, สี, ตัวเลือก, SKU, ราคาส่ง, ค่าแพค, รวมต้นทุน โดยแอปจะคำนวณรวม VAT 7% ให้อัตโนมัติ</p>
+      </div>
+      <div id="productImportMapStep" style="display:none">
+        <p class="modal-note">เลือก Sheet ที่มีข้อมูลรายได้ (Income) แล้วกำหนดคอลัมน์ที่ตรงกัน</p>
+        <div class="form-grid">
+          <label>ชื่อ Sheet <select id="productImportSheet"></select></label>
+          <label>แถวหัวตาราง (Header) <input id="productImportHeaderRow" type="number" min="1" value="1"></label>
+        </div>
+        <div class="col-map-grid">
+          <label>ชื่อสินค้า <select id="productMapName"></select></label>
+          <label>ตัวเลือก <select id="productMapOption"></select></label>
+          <label>สี <select id="productMapColor"></select></label>
+          <label>SKU <select id="productMapSku"></select></label>
+          <label>รูปภาพ <select id="productMapImage"></select></label>
+          <label>ราคาส่ง <select id="productMapWholesale"></select></label>
+          <label>ค่าแพค <select id="productMapPacking"></select></label>
+          <label>รวมต้นทุน <select id="productMapTotal"></select></label>
+          <label>สต็อก <select id="productMapStock"></select></label>
+          <label>สถานะ <select id="productMapStatus"></select></label>
+        </div>
+        <div class="preview-wrap">
+          <table class="preview-table">
+            <thead id="productPreviewHead"></thead>
+            <tbody id="productPreviewBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" type="button" data-close="productImportDialog">ยกเลิก</button>
+        <button id="chooseProductFileBtn" class="btn primary" type="button">เลือกไฟล์</button>
+        <button id="importMappedProductsBtn" class="btn primary" type="button" style="display:none">นำเข้า</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="saleDialog" class="modal">
+    <form method="dialog" id="saleForm">
+      <h2 id="saleDialogTitle">เพิ่มรายการขาย</h2>
+      <div class="form-grid">
+        <label>แพลตฟอร์ม <select id="salePlatformInput"></select></label>
+        <label>วันที่สั่งซื้อ <input id="saleDateInput" type="date"></label>
+        <label>คำสั่งซื้อ <input id="saleOrderInput"></label>
+        <label>สถานะคำสั่งซื้อ <input id="saleStatusInput" value="สำเร็จแล้ว"></label>
+        <label class="span-2">สถานะคืนเงิน/คืนสินค้า <input id="saleRefundInput"></label>
+        <label class="span-2">ชื่อสินค้า <input id="saleProductInput" required></label>
+        <label class="span-2">ตัวเลือก <input id="saleOptionInput"></label>
+        <label>จำนวน <input id="saleQtyInput" type="number" min="1" step="1" value="1"></label>
+        <label>ราคาขาย/ชิ้น <input id="salePriceInput" type="number" min="0" step="0.01"></label>
+        <label>คอมมิชชั่น <input id="saleCommissionInput" type="number" min="0" step="0.01"></label>
+        <label>Transaction Fee <input id="saleTransactionInput" type="number" min="0" step="0.01"></label>
+        <label>ค่าบริการ <input id="saleServiceInput" type="number" min="0" step="0.01"></label>
+        <label>ส่วนลดผู้ขาย <input id="saleDiscountInput" type="number" min="0" step="0.01"></label>
+        <label class="span-2">ค้นหาสินค้าต้นทุน
+          <span class="search-action-row">
+            <input id="saleCostSearchInput" type="search" placeholder="ค้นหาจากชื่อสินค้า สี ตัวเลือก SKU หรือต้นทุน">
+            <button id="saleCostSearchBtn" class="btn secondary" type="button">ค้นหา</button>
+          </span>
+        </label>
+        <label class="span-2">ต้นทุนที่จับคู่ <select id="saleCostInput"></select></label>
+      </div>
+      <div id="saleCalcPreview" class="calc-preview"></div>
+      <div class="modal-actions">
+        <button class="btn ghost" type="button" data-close="saleDialog">ยกเลิก</button>
+        <button class="btn primary" type="submit">บันทึก</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="salesBulkDialog" class="modal">
+    <form method="dialog" id="salesBulkForm">
+      <h2>แก้ไขรายการขายหลายรายการ</h2>
+      <div class="form-grid">
+        <label>ย้ายแพลตฟอร์ม <select id="bulkSalePlatformInput"></select></label>
+        <label>จับคู่ต้นทุน <select id="bulkSaleCostInput"></select></label>
+        <label>สถานะคำสั่งซื้อ <input id="bulkSaleStatusInput" placeholder="เว้นว่างถ้าไม่แก้"></label>
+        <label>สถานะคืนเงิน/คืนสินค้า <input id="bulkSaleRefundInput" placeholder="เว้นว่างถ้าไม่แก้"></label>
+        <label class="span-2 checkbox-row">
+          <input id="bulkSaleForceIncludedInput" type="checkbox">
+          บังคับให้นับกำไรสำหรับรายการที่เลือก
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" type="button" data-close="salesBulkDialog">ยกเลิก</button>
+        <button class="btn primary" type="submit">บันทึก</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="stockDialog" class="modal">
+    <form method="dialog" id="stockForm">
+      <h2 id="stockDialogTitle">ปรับสต็อก</h2>
+      <div class="form-grid">
+        <label class="span-2">สินค้า <select id="stockProductInput"></select></label>
+        <label>วิธีปรับ
+          <select id="stockModeInput">
+            <option value="set">ตั้งยอดใหม่</option>
+            <option value="in">รับเข้า</option>
+            <option value="out">ตัดออก</option>
+          </select>
+        </label>
+        <label>จำนวน <input id="stockQtyInput" type="number" min="0" step="1" required></label>
+        <label class="span-2">สถานะ <input id="stockStatusInput" placeholder="มีสินค้าพร้อมจำหน่าย"></label>
+      </div>
+      <div id="stockPreview" class="calc-preview"></div>
+      <div class="modal-actions">
+        <button class="btn ghost" type="button" data-close="stockDialog">ยกเลิก</button>
+        <button class="btn primary" type="submit">บันทึก</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="cloudDialog" class="modal">
+    <form method="dialog" id="cloudForm">
+      <h2>Cloud Sync ด้วย Supabase</h2>
+      <p class="modal-note">กรอกค่าจาก Supabase Project เดียวกันในทุกเครื่อง และใช้ Workspace ID เดียวกันเพื่อเห็นข้อมูลชุดเดียวกันแบบ realtime.</p>
+      <div class="form-grid">
+        <label class="span-2">Supabase URL <input id="supabaseUrlInput" placeholder="https://xxxx.supabase.co"></label>
+        <label class="span-2">Anon public key <input id="supabaseAnonKeyInput" placeholder="eyJ..."></label>
+        <label>Workspace ID <input id="workspaceIdInput" placeholder="tjc-electric-main"></label>
+        <label class="checkbox-row">
+          <input id="cloudEnabledInput" type="checkbox">
+          เปิดใช้ Cloud Sync
+        </label>
+      </div>
+      <div class="cloud-actions">
+        <button id="pullCloudBtn" class="btn secondary" type="button">ดึงข้อมูลจาก Cloud</button>
+        <button id="pushCloudBtn" class="btn secondary" type="button">ส่งข้อมูลเครื่องนี้ขึ้น Cloud</button>
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" type="button" data-close="cloudDialog">ยกเลิก</button>
+        <button class="btn primary" type="submit">บันทึกและเชื่อมต่อ</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="src/app.js"></script>
+</body>
+</html>
