@@ -13,7 +13,7 @@
 <body>
   <header class="app-header">
     <div class="brand-block">
-      <div class="brand-logo logo-mark" aria-hidden="true">TJC</div>
+      <img class="brand-logo" src="assets/tjc-electric-logo.png" alt="TJC ELECTRIC">
       <div>
         <p class="eyebrow">TJC ELECTRIC</p>
         <h1>ต้นทุนสินค้า ราคา และสต็อก</h1>
@@ -84,12 +84,17 @@
             <h2>ยอดขายรวม</h2>
             <span id="dashSalesPanelMeta" class="muted"></span>
           </div>
-          <canvas id="platformChart" height="240"></canvas>
+          <div class="dashboard-sales-body">
+            <div id="salesSummaryList" class="dashboard-summary"></div>
+            <div class="dashboard-sales-chart">
+              <canvas id="platformChart" height="240"></canvas>
+            </div>
+          </div>
         </section>
 
         <section class="panel">
           <div class="panel-head split">
-            <h2>สินค้าขายดี</h2>
+            <h2>สินค้าขายดี 5 อันดับแรก</h2>
             <span id="dashTopProductMeta" class="muted"></span>
           </div>
           <canvas id="productChart" height="240"></canvas>
@@ -134,7 +139,7 @@
           <table>
             <thead>
               <tr>
-                <th>วันที่</th>
+                <th>วันที่ทำการสั่งซื้อ</th>
                 <th>แพลตฟอร์ม</th>
                 <th>คำสั่งซื้อ</th>
                 <th>สินค้า</th>
@@ -206,7 +211,16 @@
         <div class="toolbar-left">
           <select id="activePlatform"></select>
           <input id="salesSearch" class="wide-input" type="search" placeholder="ค้นหาสินค้า คำสั่งซื้อ หรือสถานะ">
+          <select id="salesSortField" class="sales-sort-select" aria-label="เรียงรายการขายตาม">
+            <option value="completedAt">เวลาที่ทำการสั่งซื้อสำเร็จ</option>
+            <option value="orderAt">วันที่ทำการสั่งซื้อ</option>
+          </select>
+          <select id="salesSortDirection" class="sales-sort-select" aria-label="ลำดับการเรียงรายการขาย">
+            <option value="desc">ใหม่ไปเก่า</option>
+            <option value="asc">เก่าไปใหม่</option>
+          </select>
           <button class="btn secondary" type="button" data-refresh-tab="sales">Refresh / Sync</button>
+          <button id="checkDuplicatesBtn" class="btn secondary" type="button">ตรวจรายการซ้ำ</button>
           <button id="importSalesBtn" class="btn secondary" type="button">โหลดไฟล์รายการขาย</button>
           <button id="exportSalesBtn" class="btn secondary" type="button">ส่งออก Excel</button>
         </div>
@@ -247,7 +261,7 @@
             <thead>
               <tr>
                 <th class="check-col"><input id="salesSelectAll" type="checkbox"></th>
-                <th>วันที่</th>
+                <th>วันที่ทำการสั่งซื้อ</th>
                 <th>แพลตฟอร์ม</th>
                 <th>คำสั่งซื้อ</th>
                 <th>สินค้า</th>
@@ -432,8 +446,16 @@
         <label>แพลตฟอร์ม <select id="salePlatformInput"></select></label>
         <label>วันที่สั่งซื้อ <input id="saleDateInput" type="date"></label>
         <label>คำสั่งซื้อ <input id="saleOrderInput"></label>
-        <label>สถานะคำสั่งซื้อ <input id="saleStatusInput" value="สำเร็จแล้ว"></label>
-        <label class="span-2">สถานะคืนเงิน/คืนสินค้า <input id="saleRefundInput"></label>
+        <label>สถานะคำสั่งซื้อ
+          <select id="saleStatusInput">
+            <option value="profit">นับกำไร</option>
+            <option value="failed">สถานะไม่สำเร็จ</option>
+            <option value="refund">คืนเงิน/คืนสินค้า</option>
+          </select>
+        </label>
+        <label id="saleRefundField" class="span-2" hidden>ยอดคืนเงิน/คืนสินค้า
+          <input id="saleRefundInput" type="number" step="0.01" placeholder="-100.00">
+        </label>
         <label class="span-2">ชื่อสินค้า <input id="saleProductInput" required></label>
         <label class="span-2">ตัวเลือก <input id="saleOptionInput"></label>
         <label>จำนวน <input id="saleQtyInput" type="number" min="1" step="1" value="1"></label>
@@ -464,8 +486,17 @@
       <div class="form-grid">
         <label>ย้ายแพลตฟอร์ม <select id="bulkSalePlatformInput"></select></label>
         <label>จับคู่ต้นทุน <select id="bulkSaleCostInput"></select></label>
-        <label>สถานะคำสั่งซื้อ <input id="bulkSaleStatusInput" placeholder="เว้นว่างถ้าไม่แก้"></label>
-        <label>สถานะคืนเงิน/คืนสินค้า <input id="bulkSaleRefundInput" placeholder="เว้นว่างถ้าไม่แก้"></label>
+        <label>สถานะคำสั่งซื้อ
+          <select id="bulkSaleStatusInput">
+            <option value="">ไม่เปลี่ยนสถานะ</option>
+            <option value="profit">นับกำไร</option>
+            <option value="failed">สถานะไม่สำเร็จ</option>
+            <option value="refund">คืนเงิน/คืนสินค้า</option>
+          </select>
+        </label>
+        <label id="bulkSaleRefundField" hidden>ยอดคืนเงิน/คืนสินค้า
+          <input id="bulkSaleRefundInput" type="number" step="0.01" placeholder="-100.00">
+        </label>
         <label class="span-2 checkbox-row">
           <input id="bulkSaleForceIncludedInput" type="checkbox">
           บังคับให้นับกำไรสำหรับรายการที่เลือก
@@ -474,6 +505,18 @@
       <div class="modal-actions">
         <button class="btn ghost" type="button" data-close="salesBulkDialog">ยกเลิก</button>
         <button class="btn primary" type="submit">บันทึก</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="duplicatesDialog" class="modal wide-modal">
+    <form method="dialog" id="duplicatesForm">
+      <h2>ตรวจรายการซ้ำ</h2>
+      <p id="duplicatesSummary" class="modal-note"></p>
+      <div id="duplicatesDetails" class="duplicate-results"></div>
+      <div class="modal-actions">
+        <button id="removeDuplicatesBtn" class="btn danger" type="button">ลบรายการซ้ำที่ปลอดภัย</button>
+        <button class="btn ghost" type="button" data-close="duplicatesDialog">ปิด</button>
       </div>
     </form>
   </dialog>

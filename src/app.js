@@ -15,11 +15,25 @@ const DEFAULT_PLATFORMS = [
   { id: "custom", name: "กำหนดเอง", commissionRate: 0, serviceRate: 0, transactionRate: 0 },
 ];
 
+const SALE_STATUS_MODES = {
+  profit: "profit",
+  failed: "failed",
+  refund: "refund",
+};
+
+const SALE_STATUS_MODE_LABELS = {
+  profit: "นับกำไร",
+  failed: "สถานะไม่สำเร็จ",
+  refund: "คืนเงิน/คืนสินค้า",
+};
+
 const state = {
   products: [],
   sales: [],
   platforms: DEFAULT_PLATFORMS.map((p) => ({ ...p })),
   activePlatform: "shopee",
+  salesSortField: "completedAt",
+  salesSortDirection: "desc",
   selectedProducts: new Set(),
   selectedSales: new Set(),
   imageTargetProductId: null,
@@ -165,7 +179,7 @@ function bindElements() {
   [
     "saveStatus", "cloudStatus", "cloudSettingsBtn", "dashPeriod", "dashDate", "dashProduct", "dashOrder", "dashPlatform",
     "kpiGrid", "dashTrendMeta", "dashSalesPanelMeta", "dashTopProductMeta", "dashIssueSummaryMeta", "dashIssueCountMeta",
-    "trendChart", "productChart", "platformChart", "issueStatusList", "issueTable", "dashTable", "dashCount",
+    "trendChart", "productChart", "platformChart", "salesSummaryList", "issueStatusList", "issueTable", "dashTable", "dashCount",
     "productSearch", "downloadProductTemplateBtn", "importProductsBtn", "exportProductsBtn", "addProductBtn", "productFile", "productImageFileInput",
     "productImportDialog", "productImportForm", "chooseProductFileBtn",
     "productImportModeStep", "productImportMapStep", "productImportSheet", "productImportHeaderRow",
@@ -174,7 +188,7 @@ function bindElements() {
     "importMappedProductsBtn",
     "productBulkBar", "productSelectedCount", "bulkProductEditBtn", "bulkProductDeleteBtn",
     "clearProductSelectionBtn", "productSelectAll", "productTable", "productCount",
-    "activePlatform", "salesSearch", "importSalesBtn", "exportSalesBtn", "addSaleBtn", "salesFile",
+    "activePlatform", "salesSearch", "salesSortField", "salesSortDirection", "importSalesBtn", "checkDuplicatesBtn", "exportSalesBtn", "addSaleBtn", "salesFile",
     "platformCommission", "platformService", "platformTransaction", "platformRateTotal",
     "salesBulkBar", "salesSelectedCount", "bulkSalesEditBtn", "bulkSalesDeleteBtn",
     "clearSalesSelectionBtn", "salesSelectAll", "salesTable", "salesCount",
@@ -188,11 +202,12 @@ function bindElements() {
     "productBulkDialog", "productBulkForm", "bulkImagePreview", "bulkImageInput", "bulkImageFileBtn",
     "bulkImageRemoveBtn", "bulkImageFileInput", "bulkWholesaleInput", "bulkPackingInput",
     "saleDialog", "saleForm", "saleDialogTitle", "salePlatformInput", "saleDateInput", "saleOrderInput",
-    "saleStatusInput", "saleRefundInput", "saleProductInput", "saleOptionInput", "saleQtyInput",
+    "saleStatusInput", "saleRefundField", "saleRefundInput", "saleProductInput", "saleOptionInput", "saleQtyInput",
     "salePriceInput", "saleCommissionInput", "saleTransactionInput", "saleServiceInput",
     "saleDiscountInput", "saleCostSearchInput", "saleCostSearchBtn", "saleCostInput", "saleCalcPreview",
     "salesBulkDialog", "salesBulkForm", "bulkSalePlatformInput", "bulkSaleCostInput",
-    "bulkSaleStatusInput", "bulkSaleRefundInput", "bulkSaleForceIncludedInput", "toast",
+    "bulkSaleStatusInput", "bulkSaleRefundField", "bulkSaleRefundInput", "bulkSaleForceIncludedInput", "toast",
+    "duplicatesDialog", "duplicatesForm", "duplicatesSummary", "duplicatesDetails", "removeDuplicatesBtn",
     "cloudDialog", "cloudForm", "supabaseUrlInput", "supabaseAnonKeyInput", "workspaceIdInput",
     "cloudEnabledInput", "pullCloudBtn", "pushCloudBtn",
   ].forEach((id) => {
@@ -279,7 +294,18 @@ function bindEvents() {
   el.salesFile.addEventListener("change", importSalesFile);
   el.exportSalesBtn.addEventListener("click", exportSales);
   el.salesSearch.addEventListener("input", renderSales);
+  el.salesSortField.addEventListener("change", () => {
+    state.salesSortField = normalizeSalesSortField(el.salesSortField.value);
+    renderSales();
+    saveState();
+  });
+  el.salesSortDirection.addEventListener("change", () => {
+    state.salesSortDirection = normalizeSalesSortDirection(el.salesSortDirection.value);
+    renderSales();
+    saveState();
+  });
   el.addSaleBtn.addEventListener("click", openSaleAdd);
+  el.checkDuplicatesBtn.addEventListener("click", openDuplicateSalesDialog);
   el.salesSelectAll.addEventListener("change", toggleAllSales);
   el.bulkSalesDeleteBtn.addEventListener("click", bulkDeleteSales);
   el.clearSalesSelectionBtn.addEventListener("click", () => {
@@ -298,6 +324,12 @@ function bindEvents() {
     el.saleTransactionInput, el.saleServiceInput, el.saleDiscountInput, el.saleCostInput,
   ].forEach((input) => {
     input.addEventListener("input", updateSalePreview);
+  });
+  [el.saleStatusInput, el.saleRefundInput, el.bulkSaleStatusInput, el.bulkSaleRefundInput].forEach((input) => {
+    input.addEventListener("change", () => {
+      syncSaleRefundFieldVisibility();
+      updateSalePreview();
+    });
   });
   el.saleCostInput.addEventListener("change", updateSalePreview);
   el.saleCostSearchBtn.addEventListener("click", searchSaleCosts);
@@ -320,6 +352,7 @@ function bindEvents() {
   });
   el.saleForm.addEventListener("submit", saveSaleFromForm);
   el.salesBulkForm.addEventListener("submit", saveSalesBulkForm);
+  el.removeDuplicatesBtn.addEventListener("click", removeSafeDuplicateSales);
 
   el.cloudSettingsBtn.addEventListener("click", openCloudSettings);
   el.cloudForm.addEventListener("submit", saveCloudSettings);
@@ -329,6 +362,8 @@ function bindEvents() {
   document.querySelectorAll("[data-close]").forEach((button) => {
     button.addEventListener("click", () => document.getElementById(button.dataset.close).close());
   });
+
+  syncSaleRefundFieldVisibility();
 
 }
 
@@ -355,6 +390,8 @@ async function loadState() {
     state.sales = Array.isArray(saved.sales) ? saved.sales.map(migrateSaleRecord) : [];
     state.platforms = mergePlatforms(saved.platforms);
     state.activePlatform = saved.activePlatform || "shopee";
+    state.salesSortField = normalizeSalesSortField(saved.salesSortField);
+    state.salesSortDirection = normalizeSalesSortDirection(saved.salesSortDirection);
     recalculateAllSales();
     if (source === "localStorage" && db) {
       await idbSet(db, STORAGE_KEY, raw).catch((error) => console.warn(error));
@@ -408,6 +445,8 @@ function saveState() {
     sales: state.sales,
     platforms: state.platforms,
     activePlatform: state.activePlatform,
+    salesSortField: state.salesSortField,
+    salesSortDirection: state.salesSortDirection,
   };
   el.saveStatus.textContent = `บันทึก ${new Date().toLocaleTimeString("th-TH")}`;
   persistStateSnapshot(data).catch((error) => {
@@ -425,6 +464,8 @@ function getStateSnapshot() {
     sales: state.sales,
     platforms: state.platforms,
     activePlatform: state.activePlatform,
+    salesSortField: state.salesSortField,
+    salesSortDirection: state.salesSortDirection,
   };
 }
 
@@ -435,6 +476,8 @@ function applyStateSnapshot(data) {
   state.sales = Array.isArray(data.sales) ? data.sales.map(migrateSaleRecord) : [];
   state.platforms = mergePlatforms(data.platforms);
   state.activePlatform = data.activePlatform || state.platforms[0]?.id || "shopee";
+  state.salesSortField = normalizeSalesSortField(data.salesSortField);
+  state.salesSortDirection = normalizeSalesSortDirection(data.salesSortDirection);
   state.selectedProducts.clear();
   state.selectedSales.clear();
   const salesBeforeRecalculate = JSON.stringify(state.sales);
@@ -465,6 +508,8 @@ function renderPlatformOptions() {
   el.salePlatformInput.innerHTML = options;
   el.bulkSalePlatformInput.innerHTML = `<option value="">ไม่เปลี่ยนแพลตฟอร์ม</option>${options}`;
   el.activePlatform.value = state.activePlatform;
+  if (el.salesSortField) el.salesSortField.value = state.salesSortField;
+  if (el.salesSortDirection) el.salesSortDirection.value = state.salesSortDirection;
 }
 
 function getPlatform(id) {
@@ -943,7 +988,9 @@ function parseSalesWorkbook(workbook, platformId) {
     orderNo: findHeader(headers, ["หมายเลขคำสั่งซื้อ", "order id"], 0),
     orderStatus: findHeader(headers, ["สถานะการสั่งซื้อ", "order status"], 1),
     refundStatus: findHeader(headers, ["สถานะการคืนเงินหรือคืนสินค้า", "refund"], 2),
+    trackingNo: findHeader(headers, ["หมายเลขติดตามพัสดุ", "tracking number", "tracking no", "tracking"], -1),
     orderDate: findHeader(headers, ["วันที่ทำการสั่งซื้อ", "order date"], 4),
+    completedDate: findHeader(headers, ["วันที่สำเร็จ", "วันที่คำสั่งซื้อสำเร็จ", "เวลาที่คำสั่งซื้อสำเร็จ", "completed date", "completed time"], -1),
     productName: findHeader(headers, ["ชื่อสินค้า", "product name", "item name"], 13),
     sku: findHeader(headers, ["เลขอ้างอิง sku", "sku reference", "sku"], -1),
     optionName: findHeader(headers, ["ชื่อตัวเลือก", "variation", "option"], 15),
@@ -962,6 +1009,7 @@ function parseSalesWorkbook(workbook, platformId) {
     if (!productName) continue;
     const orderStatus = cleanText(row[col.orderStatus]);
     const refundStatus = cleanText(row[col.refundStatus]);
+    const saleStatusMode = getSaleStatusMode({ orderStatus, refundStatus });
     const qty = Math.max(1, Math.round(toNumber(row[col.qty]) || 1));
     const sku = col.sku >= 0 ? cleanText(row[col.sku]) : "";
     const optionName = cleanText(row[col.optionName]);
@@ -970,9 +1018,20 @@ function parseSalesWorkbook(workbook, platformId) {
       id: createId("s"),
       platform: platformId,
       orderNo: cleanText(row[col.orderNo]),
+      trackingNo: col.trackingNo >= 0 ? cleanText(row[col.trackingNo]) : "",
       orderStatus,
       refundStatus,
+      saleStatusMode,
+      orderDateTime: parseDateTimeValue(row[col.orderDate]) || normalizeDateTimeFromDate(row[col.orderDate]),
       orderDate: parseDateValue(row[col.orderDate]),
+      completedDateTime: saleStatusMode === SALE_STATUS_MODES.profit
+        ? (col.completedDate >= 0
+          ? (parseDateTimeValue(row[col.completedDate]) || parseDateTimeValue(row[col.orderDate]) || normalizeDateTimeFromDate(row[col.orderDate]))
+          : (parseDateTimeValue(row[col.orderDate]) || normalizeDateTimeFromDate(row[col.orderDate])))
+        : "",
+      completedDate: saleStatusMode === SALE_STATUS_MODES.profit
+        ? (col.completedDate >= 0 ? parseDateValue(row[col.completedDate]) || parseDateValue(row[col.orderDate]) : parseDateValue(row[col.orderDate]))
+        : "",
       productName,
       optionName,
       sku,
@@ -984,6 +1043,7 @@ function parseSalesWorkbook(workbook, platformId) {
       serviceFee: absNumber(row[col.serviceFee]),
       feeFromFile: true,
       discountIncludedInSalePrice: true,
+      refundAdjustment: "",
       matchedCostId: match.status === "matched" ? match.product.id : "",
       matchStatus: match.status,
       manualCostMatch: false,
@@ -1146,10 +1206,28 @@ function resolveProductImageUrl(imageUrl) {
 
 function migrateSaleRecord(sale) {
   if (!sale || typeof sale !== "object") return sale;
-  if (sale.discountIncludedInSalePrice === undefined && sale.platform === "shopee" && sale.feeFromFile) {
-    return { ...sale, discountIncludedInSalePrice: true };
+  const orderDate = cleanText(sale.orderDate) || parseDateValue(sale.orderDateTime);
+  const orderDateTime = cleanText(sale.orderDateTime) || normalizeDateTimeFromDate(orderDate);
+  const statusMode = getSaleStatusMode(sale);
+  const completedDate = cleanText(sale.completedDate)
+    || parseDateValue(sale.completedDateTime)
+    || (statusMode === SALE_STATUS_MODES.profit ? orderDate : "");
+  const completedDateTime = cleanText(sale.completedDateTime)
+    || (completedDate ? normalizeDateTimeFromDate(completedDate) : (statusMode === SALE_STATUS_MODES.profit ? orderDateTime : ""));
+  const refundAdjustment = cleanText(sale.refundAdjustment);
+  const next = {
+    ...sale,
+    saleStatusMode: statusMode,
+    orderDate,
+    orderDateTime,
+    completedDate,
+    completedDateTime,
+    refundAdjustment,
+  };
+  if (next.discountIncludedInSalePrice === undefined && next.platform === "shopee" && next.feeFromFile) {
+    next.discountIncludedInSalePrice = true;
   }
-  return sale;
+  return next;
 }
 
 function recalculateAllSales() {
@@ -1203,12 +1281,24 @@ function calculateSale(sale) {
   const totalFee = round2(commissionFee + transactionFee + serviceFee);
   const sellerDiscount = round2(Number(sale.sellerDiscount || 0));
   const sellerDiscountDeducted = sale.discountIncludedInSalePrice ? 0 : sellerDiscount;
-  const statusAllowsProfit = cleanText(sale.orderStatus) === "สำเร็จแล้ว" && !cleanText(sale.refundStatus);
-  const includedInProfit = Boolean(sale.forceIncluded) || (statusAllowsProfit && Boolean(product));
-  const profit = includedInProfit ? round2(grossSales - totalFee - sellerDiscountDeducted - totalCost) : 0;
+  const statusMode = getSaleStatusMode(sale);
+  const rawProfit = round2(grossSales - totalFee - sellerDiscountDeducted - totalCost);
+  const manualRefundAdjustment = cleanText(sale.refundAdjustment) !== "" ? -Math.abs(toNumber(sale.refundAdjustment)) : 0;
+  const includedInProfit = Boolean(sale.forceIncluded)
+    || (statusMode === SALE_STATUS_MODES.profit && Boolean(product))
+    || statusMode === SALE_STATUS_MODES.refund;
+  let profit = 0;
+  if (includedInProfit) {
+    if (statusMode === SALE_STATUS_MODES.refund) {
+      profit = cleanText(sale.refundAdjustment) !== "" ? round2(rawProfit + manualRefundAdjustment) : -Math.abs(rawProfit);
+    } else if (statusMode === SALE_STATUS_MODES.profit) {
+      profit = rawProfit;
+    }
+  }
   const margin = includedInProfit && grossSales ? round2((profit / grossSales) * 100) : 0;
   return {
     ...sale,
+    saleStatusMode: statusMode,
     qty,
     grossSales,
     commissionFee: round2(commissionFee),
@@ -1270,54 +1360,87 @@ function renderDashboard() {
     acc.orders.add(sale.orderNo || sale.id);
     return acc;
   }, { grossSales: 0, orders: new Set() });
-  const issueRows = scopeRows.filter((sale) => !sale.includedInProfit);
+  const issueRows = scopeRows.filter((sale) => {
+    const mode = getSaleStatusMode(sale);
+    if (mode === SALE_STATUS_MODES.failed) return true;
+    if (mode === SALE_STATUS_MODES.refund) return true;
+    return mode === SALE_STATUS_MODES.profit && !sale.includedInProfit;
+  });
   const issueCounts = issueRows.reduce((acc, sale) => {
-    if (cleanText(sale.refundStatus)) {
+    const mode = getSaleStatusMode(sale);
+    if (mode === SALE_STATUS_MODES.refund) {
       acc.refund += 1;
       return acc;
     }
-    if (cleanText(sale.orderStatus) === "สำเร็จแล้ว") {
+    if (mode === SALE_STATUS_MODES.profit && !sale.includedInProfit) {
       acc.waiting += 1;
       return acc;
     }
     acc.failed += 1;
     return acc;
   }, { failed: 0, refund: 0, waiting: 0 });
-  const orderCompletedCount = scopeRows.filter((sale) => cleanText(sale.orderStatus) === "สำเร็จแล้ว").length;
+  const orderCompletedCount = scopeRows.filter((sale) => getSaleStatusMode(sale) === SALE_STATUS_MODES.profit).length;
   const orderProblemCount = scopeRows.length - orderCompletedCount;
   const bestProduct = groupBy(scopeRows, "productName", "grossSales", 1)[0] || { label: "ยังไม่มีข้อมูล", value: 0 };
+  const salesSummaryItems = [
+    { label: "ยอดขาย", value: salesTotals.grossSales, tone: "sales" },
+    { label: "หักต้นทุน", value: profitTotals.totalCost, tone: "cost" },
+    { label: "หักค่าธรรมเนียม/ส่วนลด", value: profitTotals.totalFee + profitTotals.sellerDiscount, tone: "fee" },
+  ];
   const issueSummaryItems = [
     { label: "สถานะไม่สำเร็จ", value: issueCounts.failed, meta: "ออเดอร์ที่ต้องตรวจสอบ", tone: "danger" },
     { label: "การคืนเงินหรือคืนสินค้า", value: issueCounts.refund, meta: "รายการที่มีการคืนเงิน/คืนสินค้า", tone: "warn" },
-    { label: "รอเลือกต้นทุน", value: issueCounts.waiting, meta: "สำเร็จแล้วแต่ยังไม่พบต้นทุน", tone: "warn" },
+    { label: "รอเลือกต้นทุน", value: issueCounts.waiting, meta: "นับกำไรแต่ยังไม่พบต้นทุน", tone: "warn" },
   ];
   const kpis = [
-    { label: "ยอดขายรวม", value: money(salesTotals.grossSales), meta: `${salesTotals.orders.size.toLocaleString("th-TH")} คำสั่งซื้อ` },
-    { label: "ต้นทุนรวม", value: money(profitTotals.totalCost), meta: "รวมเฉพาะรายการที่นับกำไร" },
-    { label: "ค่าธรรมเนียม", value: money(profitTotals.totalFee), meta: "ค่าคอมมิชชั่น + ค่าบริการ + ธุรกรรม" },
-    { label: "กำไรสุทธิ", value: money(profitTotals.profit), meta: `ส่วนลดผู้ขาย ${money(profitTotals.sellerDiscount)}`, loss: profitTotals.profit < 0 },
-    { label: "จำนวนคำสั่งซื้อ", value: scopeRows.length.toLocaleString("th-TH"), meta: `${salesTotals.orders.size.toLocaleString("th-TH")} เลขคำสั่งซื้อ` },
-    { label: "สินค้าขายดี", value: bestProduct.label, meta: `${money(bestProduct.value)} ยอดขาย` },
-    { label: "เคสปัญหา/เคลม สถานะ", value: `${issueCounts.failed.toLocaleString("th-TH")} ไม่สำเร็จ`, meta: `คืนเงิน/คืนสินค้า ${issueCounts.refund.toLocaleString("th-TH")} · รอเลือกต้นทุน ${issueCounts.waiting.toLocaleString("th-TH")}` },
-    { label: "สถานะการสั่งซื้อ", value: `${orderCompletedCount.toLocaleString("th-TH")} สำเร็จแล้ว`, meta: `ติดปัญหา ${orderProblemCount.toLocaleString("th-TH")} รายการ` },
+    { icon: "฿", chip: `${salesTotals.orders.size.toLocaleString("th-TH")} ออเดอร์`, label: "ยอดขายรวม", value: money(salesTotals.grossSales), meta: "ยอดขายทั้งหมดที่กรองอยู่", theme: "sales" },
+    { icon: "□", chip: "ราคาส่ง + ค่าแพค", label: "ต้นทุนรวม", value: money(profitTotals.totalCost), meta: "รวมเฉพาะรายการที่นับกำไร", theme: "cost" },
+    { icon: "%", chip: "ส่วนลดผู้ขาย", label: "ค่าธรรมเนียม", value: money(profitTotals.totalFee), meta: "ค่าคอมมิชชั่น + ค่าบริการ + ธุรกรรม", theme: "fee" },
+    { icon: "↗", chip: `Margin ${formatNumber(salesTotals.grossSales ? (profitTotals.profit / salesTotals.grossSales) * 100 : 0)}%`, label: "กำไรสุทธิ", value: money(profitTotals.profit), meta: `ส่วนลดผู้ขาย ${money(profitTotals.sellerDiscount)}`, loss: profitTotals.profit < 0, theme: "profit" },
+    { icon: "#", chip: `นับกำไร ${profitRows.length.toLocaleString("th-TH")} | มีปัญหา ${issueRows.length.toLocaleString("th-TH")}`, label: "จำนวนคำสั่งซื้อ", value: scopeRows.length.toLocaleString("th-TH"), meta: `${salesTotals.orders.size.toLocaleString("th-TH")} เลขคำสั่งซื้อ`, theme: "count" },
+    { icon: "★", chip: "รอข้อมูลขาย", label: "สินค้าขายดี", value: bestProduct.label, meta: bestProduct.label === "ยังไม่มีข้อมูล" ? "ยังไม่มีรายการที่นับกำไร" : `${money(bestProduct.value)} ยอดขาย`, theme: "product" },
+    { icon: "!", chip: `${issueRows.length.toLocaleString("th-TH")} คำสั่งซื้อ`, label: "เคสปัญหา/เคลม สถานะ", value: `${issueCounts.failed.toLocaleString("th-TH")} ไม่สำเร็จ`, meta: `คืนเงิน/คืนสินค้า ${issueCounts.refund.toLocaleString("th-TH")} | รอเลือกต้นทุน ${issueCounts.waiting.toLocaleString("th-TH")}`, theme: "issue" },
+    { icon: "✓", chip: `${orderCompletedCount.toLocaleString("th-TH")} สำเร็จ`, label: "สถานะการสั่งซื้อ", value: `${orderCompletedCount.toLocaleString("th-TH")}`, meta: `ติดปัญหา ${orderProblemCount.toLocaleString("th-TH")} รายการ`, theme: "status" },
   ];
   el.kpiGrid.innerHTML = kpis.map((item) => `
-    <div class="kpi">
-      <div class="label">${item.label}</div>
+    <div class="kpi ${item.theme ? `kpi-${item.theme}` : ""}">
+      <div class="kpi-top">
+        <div class="kpi-icon" aria-hidden="true">${item.icon || ""}</div>
+        <div class="kpi-chip">${escapeHtml(item.chip || "")}</div>
+      </div>
       <div class="value${item.loss ? " loss" : ""}">${escapeHtml(item.value)}</div>
+      <div class="label">${item.label}</div>
       <div class="meta">${escapeHtml(item.meta)}</div>
     </div>
   `).join("");
 
-  if (el.dashTrendMeta) el.dashTrendMeta.textContent = `${scopeRows.length.toLocaleString("th-TH")} รายการ`;
-  if (el.dashSalesPanelMeta) el.dashSalesPanelMeta.textContent = `${scopeRows.length.toLocaleString("th-TH")} รายการ`;
-  if (el.dashTopProductMeta) el.dashTopProductMeta.textContent = bestProduct.label;
+  if (el.dashTrendMeta) el.dashTrendMeta.textContent = "ยอดขายเทียบกำไร";
+  if (el.dashSalesPanelMeta) el.dashSalesPanelMeta.textContent = "สรุปตามแพลตฟอร์มและกำไรสุทธิ";
+  if (el.dashTopProductMeta) el.dashTopProductMeta.textContent = "Top 3 เน้นสี | 5 อันดับแรก";
   if (el.dashIssueSummaryMeta) el.dashIssueSummaryMeta.textContent = `${issueRows.length.toLocaleString("th-TH")} เคส`;
   if (el.dashIssueCountMeta) el.dashIssueCountMeta.textContent = `${issueRows.length.toLocaleString("th-TH")} รายการ`;
 
   drawTrendChart(el.trendChart, groupTrend(scopeRows));
   drawHorizontalChart(el.platformChart, groupBy(scopeRows, "platform", "grossSales", 4, platformName), "ยอดขาย", "#1e5f98");
-  drawHorizontalChart(el.productChart, groupBy(scopeRows, "productName", "grossSales", 8), "ยอดขาย", "#216e3a");
+  drawHorizontalChart(el.productChart, groupBy(scopeRows, "productName", "grossSales", 5), "ยอดขาย", "#216e3a", {
+    highlightTopN: 3,
+    highlightColor: "#0b4d9a",
+    normalColor: "#7aa8e8",
+  });
+
+  if (el.salesSummaryList) {
+    el.salesSummaryList.innerHTML = salesSummaryItems.map((item) => `
+      <div class="dashboard-summary-row ${item.tone || ""}">
+        <div class="label">${escapeHtml(item.label)}</div>
+        <div class="value ${item.value < 0 ? "loss" : "profit"}">${money(item.value)}</div>
+      </div>
+    `).join("") + `
+      <div class="dashboard-summary-total">
+        <div class="label">กำไรสุทธิ</div>
+        <div class="value ${profitTotals.profit < 0 ? "loss" : "profit"}">${money(profitTotals.profit)}</div>
+      </div>
+    `;
+  }
 
   if (el.issueStatusList) {
     el.issueStatusList.innerHTML = issueSummaryItems.map((item) => `
@@ -1813,8 +1936,8 @@ function renderSales() {
   const rows = state.sales.filter((sale) => {
     if (sale.platform !== state.activePlatform) return false;
     if (!query) return true;
-    return [sale.productName, sale.optionName, sale.orderNo, sale.orderStatus, sale.refundStatus].some((value) => normalizeName(value).includes(query));
-  });
+    return [sale.productName, sale.optionName, sale.orderNo, sale.trackingNo, sale.orderStatus, sale.refundStatus, sale.saleStatusMode, sale.refundAdjustment].some((value) => normalizeName(value).includes(query));
+  }).sort(compareSalesForSelectedSort);
   el.salesCount.textContent = `${rows.length.toLocaleString("th-TH")} จาก ${state.sales.filter((sale) => sale.platform === state.activePlatform).length.toLocaleString("th-TH")} รายการ`;
   el.salesSelectedCount.textContent = state.selectedSales.size.toLocaleString("th-TH");
   el.salesBulkBar.classList.toggle("active", state.selectedSales.size > 0);
@@ -1827,7 +1950,7 @@ function renderSales() {
       <td class="check-col"><input type="checkbox" data-sale-select="${escapeHtml(sale.id)}" ${state.selectedSales.has(sale.id) ? "checked" : ""}></td>
       <td>${escapeHtml(sale.orderDate || "-")}</td>
       <td>${escapeHtml(platformName(sale.platform))}</td>
-      <td><span class="sku">${escapeHtml(sale.orderNo || "-")}</span></td>
+      <td><span class="sku">${escapeHtml(sale.orderNo || "-")}</span>${sale.trackingNo ? `<div class="subline">พัสดุ: ${escapeHtml(sale.trackingNo)}</div>` : ""}</td>
       <td><div class="row-title" title="${escapeHtml(sale.productName)}">${escapeHtml(sale.productName)}</div><div class="subline">${escapeHtml(sale.optionName || "")}</div></td>
       <td>${matchLabel(sale)}</td>
       <td class="num">${money(sale.grossSales)}</td>
@@ -1856,7 +1979,7 @@ function renderSales() {
 function toggleAllSales() {
   const query = normalizeName(el.salesSearch.value);
   state.sales.forEach((sale) => {
-    const visible = sale.platform === state.activePlatform && (!query || [sale.productName, sale.optionName, sale.orderNo, sale.orderStatus, sale.refundStatus].some((value) => normalizeName(value).includes(query)));
+    const visible = sale.platform === state.activePlatform && (!query || [sale.productName, sale.optionName, sale.orderNo, sale.trackingNo, sale.orderStatus, sale.refundStatus, sale.saleStatusMode, sale.refundAdjustment].some((value) => normalizeName(value).includes(query)));
     if (visible) {
       el.salesSelectAll.checked ? state.selectedSales.add(sale.id) : state.selectedSales.delete(sale.id);
     }
@@ -1869,11 +1992,13 @@ function openSaleAdd() {
   el.saleDialogTitle.textContent = "เพิ่มรายการขาย";
   el.saleForm.reset();
   el.salePlatformInput.value = state.activePlatform;
-  el.saleStatusInput.value = "สำเร็จแล้ว";
+  el.saleStatusInput.value = SALE_STATUS_MODES.profit;
+  el.saleRefundInput.value = "";
   el.saleQtyInput.value = 1;
   el.saleCostSearchInput.value = "";
   populateCostSelect(el.saleCostInput, "ยังไม่จับคู่ต้นทุน", "", "", { requireQuery: true });
   updateSalePreview();
+  syncSaleRefundFieldVisibility();
   el.saleDialog.showModal();
 }
 
@@ -1885,8 +2010,11 @@ function openSaleEdit(id) {
   el.salePlatformInput.value = sale.platform;
   el.saleDateInput.value = sale.orderDate || "";
   el.saleOrderInput.value = sale.orderNo || "";
-  el.saleStatusInput.value = sale.orderStatus || "";
-  el.saleRefundInput.value = sale.refundStatus || "";
+  const statusMode = getSaleStatusMode(sale);
+  el.saleStatusInput.value = statusMode;
+  el.saleRefundInput.value = statusMode === SALE_STATUS_MODES.refund && cleanText(sale.refundAdjustment) !== ""
+    ? String(-Math.abs(toNumber(sale.refundAdjustment)))
+    : "";
   el.saleProductInput.value = sale.productName || "";
   el.saleOptionInput.value = sale.optionName || "";
   el.saleQtyInput.value = sale.qty || 1;
@@ -1899,16 +2027,23 @@ function openSaleEdit(id) {
   populateCostSelect(el.saleCostInput, "ยังไม่จับคู่ต้นทุน", el.saleCostSearchInput.value, sale.matchedCostId || "", { requireQuery: true });
   el.saleCostInput.value = sale.matchedCostId || "";
   updateSalePreview();
+  syncSaleRefundFieldVisibility();
   el.saleDialog.showModal();
 }
 
 function updateSalePreview() {
   const hasFeeAmounts = [el.saleCommissionInput, el.saleTransactionInput, el.saleServiceInput].some((input) => input.value !== "");
+  const statusMode = normalizeSaleStatusMode(el.saleStatusInput.value) || SALE_STATUS_MODES.profit;
+  const refundAdjustment = statusMode === SALE_STATUS_MODES.refund && cleanText(el.saleRefundInput.value) !== ""
+    ? String(-Math.abs(toNumber(el.saleRefundInput.value)))
+    : "";
   const sale = calculateSale({
     id: state.editingSaleId || "preview",
     platform: el.salePlatformInput.value || state.activePlatform,
-    orderStatus: cleanText(el.saleStatusInput.value),
-    refundStatus: cleanText(el.saleRefundInput.value),
+    saleStatusMode: statusMode,
+    orderStatus: saleStatusModeLabel(statusMode),
+    refundStatus: statusMode === SALE_STATUS_MODES.refund ? refundAdjustment : "",
+    refundAdjustment,
     qty: toNumber(el.saleQtyInput.value) || 1,
     salePrice: toNumber(el.salePriceInput.value),
     commissionFee: toNumber(el.saleCommissionInput.value),
@@ -1937,19 +2072,35 @@ function searchSaleCosts() {
 
 function saveSaleFromForm(event) {
   event.preventDefault();
+  const statusMode = normalizeSaleStatusMode(el.saleStatusInput.value) || SALE_STATUS_MODES.profit;
+  const refundAdjustment = statusMode === SALE_STATUS_MODES.refund && cleanText(el.saleRefundInput.value) !== ""
+    ? String(-Math.abs(toNumber(el.saleRefundInput.value)))
+    : "";
   const matchStatus = el.saleCostInput.value ? "matched" : findProductMatch({
     productName: el.saleProductInput.value,
     optionName: el.saleOptionInput.value,
   }).status;
   const hasFeeAmounts = [el.saleCommissionInput, el.saleTransactionInput, el.saleServiceInput].some((input) => input.value !== "");
   const existingSale = state.editingSaleId ? getSale(state.editingSaleId) : null;
+  const nextOrderDate = cleanText(el.saleDateInput.value);
+  const preservedOrderDateTime = existingSale?.orderDate === nextOrderDate && existingSale?.orderDateTime
+    ? existingSale.orderDateTime
+    : normalizeDateTimeFromDate(nextOrderDate);
+  const preservedCompletedDateTime = statusMode === SALE_STATUS_MODES.profit
+    ? (existingSale?.completedDateTime || normalizeDateTimeFromDate(nextOrderDate))
+    : "";
   const sale = calculateSale({
     id: state.editingSaleId || createId("s"),
     platform: el.salePlatformInput.value,
     orderNo: cleanText(el.saleOrderInput.value),
-    orderStatus: cleanText(el.saleStatusInput.value),
-    refundStatus: cleanText(el.saleRefundInput.value),
-    orderDate: el.saleDateInput.value,
+    saleStatusMode: statusMode,
+    orderStatus: saleStatusModeLabel(statusMode),
+    refundStatus: statusMode === SALE_STATUS_MODES.refund ? refundAdjustment : "",
+    refundAdjustment,
+    orderDate: nextOrderDate,
+    orderDateTime: preservedOrderDateTime,
+    completedDate: statusMode === SALE_STATUS_MODES.profit ? (existingSale?.completedDate || nextOrderDate) : "",
+    completedDateTime: preservedCompletedDateTime,
     productName: cleanText(el.saleProductInput.value),
     optionName: cleanText(el.saleOptionInput.value),
     qty: toNumber(el.saleQtyInput.value) || 1,
@@ -1984,6 +2135,7 @@ function openBulkSaleEdit() {
   el.bulkSaleStatusInput.value = "";
   el.bulkSaleRefundInput.value = "";
   el.bulkSaleForceIncludedInput.checked = false;
+  syncSaleRefundFieldVisibility();
   el.salesBulkDialog.showModal();
 }
 
@@ -1991,8 +2143,10 @@ function saveSalesBulkForm(event) {
   event.preventDefault();
   const platform = el.bulkSalePlatformInput.value;
   const costId = el.bulkSaleCostInput.value;
-  const orderStatus = cleanText(el.bulkSaleStatusInput.value);
-  const refundStatus = cleanText(el.bulkSaleRefundInput.value);
+  const statusMode = normalizeSaleStatusMode(el.bulkSaleStatusInput.value);
+  const refundAdjustment = statusMode === SALE_STATUS_MODES.refund && cleanText(el.bulkSaleRefundInput.value) !== ""
+    ? String(-Math.abs(toNumber(el.bulkSaleRefundInput.value)))
+    : "";
   const forceIncluded = el.bulkSaleForceIncludedInput.checked;
   state.sales = state.sales.map((sale) => {
     if (!state.selectedSales.has(sale.id)) return sale;
@@ -2002,8 +2156,10 @@ function saveSalesBulkForm(event) {
       matchedCostId: costId || sale.matchedCostId,
       matchStatus: costId ? "matched" : sale.matchStatus,
       manualCostMatch: costId ? true : sale.manualCostMatch,
-      orderStatus: orderStatus || sale.orderStatus,
-      refundStatus: refundStatus || sale.refundStatus,
+      saleStatusMode: statusMode || sale.saleStatusMode,
+      orderStatus: statusMode ? saleStatusModeLabel(statusMode) : sale.orderStatus,
+      refundStatus: statusMode === SALE_STATUS_MODES.refund ? refundAdjustment : sale.refundStatus,
+      refundAdjustment: statusMode === SALE_STATUS_MODES.refund ? refundAdjustment : sale.refundAdjustment,
       forceIncluded: forceIncluded || sale.forceIncluded,
     };
     return calculateSale(next);
@@ -2028,6 +2184,150 @@ function bulkDeleteSales() {
   state.selectedSales.clear();
   renderAll();
   showToast("ลบรายการขายที่เลือกแล้ว");
+}
+
+function openDuplicateSalesDialog() {
+  const analysis = analyzeDuplicateSales(state.activePlatform);
+  const platform = platformName(state.activePlatform);
+  el.duplicatesSummary.textContent = `ตรวจในแพลตฟอร์ม ${platform}: พบกลุ่มซ้ำแน่นอน ${analysis.exactGroups.length.toLocaleString("th-TH")} กลุ่ม ลบได้อย่างปลอดภัย ${analysis.removableCount.toLocaleString("th-TH")} รายการ และพบกลุ่มที่ควรตรวจเอง ${analysis.suspiciousGroups.length.toLocaleString("th-TH")} กลุ่ม`;
+  el.removeDuplicatesBtn.disabled = analysis.removableCount === 0;
+  el.duplicatesDetails.innerHTML = renderDuplicateResults(analysis);
+  el.duplicatesDialog.showModal();
+}
+
+function analyzeDuplicateSales(platformId = state.activePlatform) {
+  const rows = state.sales.filter((sale) => sale.platform === platformId);
+  const safeMap = new Map();
+  const baseMap = new Map();
+
+  rows.forEach((sale, index) => {
+    const baseKey = saleImportKey(sale);
+    if (!baseKey) return;
+    const exactKey = saleDuplicateExactKey(sale);
+    const item = { sale, index, exactKey, baseKey };
+    const sourceRow = cleanText(sale.sourceRow);
+    if (sourceRow) {
+      const safeKey = `${exactKey}::source-row:${sourceRow}`;
+      if (!safeMap.has(safeKey)) safeMap.set(safeKey, []);
+      safeMap.get(safeKey).push(item);
+    }
+    if (!baseMap.has(baseKey)) baseMap.set(baseKey, []);
+    baseMap.get(baseKey).push(item);
+  });
+
+  const exactGroups = Array.from(safeMap.values())
+    .filter((items) => items.length > 1)
+    .map((items) => ({
+      keep: items[0].sale,
+      duplicateIds: items.slice(1).map((item) => item.sale.id),
+      items: items.map((item) => item.sale),
+      sourceRow: items[0].sale.sourceRow || "",
+    }))
+    .sort((a, b) => b.items.length - a.items.length);
+
+  const removableIds = new Set(exactGroups.flatMap((group) => group.duplicateIds));
+  const suspiciousGroups = Array.from(baseMap.values())
+    .map((items) => items.filter((item) => !removableIds.has(item.sale.id)))
+    .filter((items) => items.length > 1)
+    .map((items) => {
+      const sourceRows = new Set(items.map((item) => cleanText(item.sale.sourceRow)).filter(Boolean));
+      return {
+        items: items.map((item) => item.sale),
+        sourceRows: Array.from(sourceRows),
+      };
+    })
+    .sort((a, b) => b.items.length - a.items.length);
+
+  return {
+    exactGroups,
+    suspiciousGroups,
+    removableIds,
+    removableCount: removableIds.size,
+  };
+}
+
+function renderDuplicateResults(analysis) {
+  if (!analysis.exactGroups.length && !analysis.suspiciousGroups.length) {
+    return `<div class="empty">ไม่พบรายการซ้ำในแพลตฟอร์มนี้</div>`;
+  }
+
+  const exactRows = analysis.exactGroups.slice(0, 60).map((group) => {
+    const sale = group.keep;
+    return `
+      <tr>
+        <td><span class="sku">${escapeHtml(sale.orderNo || "-")}</span></td>
+        <td>
+          <div class="row-title" title="${escapeHtml(sale.productName)}">${escapeHtml(sale.productName || "-")}</div>
+          <div class="subline">${escapeHtml(sale.optionName || "")}</div>
+          <div class="subline">พัสดุ: ${escapeHtml(sale.trackingNo || "-")}</div>
+        </td>
+        <td class="num">${group.items.length.toLocaleString("th-TH")}</td>
+        <td class="num">${group.duplicateIds.length.toLocaleString("th-TH")}</td>
+        <td class="num">${escapeHtml(group.sourceRow || "-")}</td>
+        <td class="num">${money(sale.grossSales)}</td>
+        <td class="num ${sale.profit >= 0 ? "profit" : "loss"}">${money(sale.profit)}</td>
+      </tr>
+    `;
+  }).join("");
+
+  const suspiciousRows = analysis.suspiciousGroups.slice(0, 60).map((group) => {
+    const sale = group.items[0];
+    return `
+      <tr>
+        <td><span class="sku">${escapeHtml(sale.orderNo || "-")}</span></td>
+        <td>
+          <div class="row-title" title="${escapeHtml(sale.productName)}">${escapeHtml(sale.productName || "-")}</div>
+          <div class="subline">${escapeHtml(sale.optionName || "")}</div>
+          <div class="subline">พัสดุ: ${escapeHtml(sale.trackingNo || "-")}</div>
+        </td>
+        <td class="num">${group.items.length.toLocaleString("th-TH")}</td>
+        <td>${escapeHtml(group.sourceRows.length ? group.sourceRows.join(", ") : "-")}</td>
+        <td>${escapeHtml(group.items.map((item) => money(item.profit)).join(", "))}</td>
+      </tr>
+    `;
+  }).join("");
+
+  return `
+    ${analysis.exactGroups.length ? `
+      <section class="duplicate-section">
+        <h3>ซ้ำแน่นอน ลบได้อย่างปลอดภัย</h3>
+        <p>ระบบจะเก็บรายการแรกไว้ และลบเฉพาะสำเนาที่รายละเอียดเหมือนกันจริง พร้อมมีเลขแถวต้นทางเดียวกันจากไฟล์นำเข้า</p>
+        <div class="table-wrap compact-table">
+          <table>
+            <thead><tr><th>คำสั่งซื้อ</th><th>สินค้า</th><th class="num">จำนวนที่พบ</th><th class="num">ลบได้</th><th class="num">แถวไฟล์</th><th class="num">ยอดขาย</th><th class="num">กำไร</th></tr></thead>
+            <tbody>${exactRows}</tbody>
+          </table>
+        </div>
+      </section>
+    ` : ""}
+    ${analysis.suspiciousGroups.length ? `
+      <section class="duplicate-section">
+        <h3>ควรตรวจเอง</h3>
+        <p>กลุ่มนี้มีเลขคำสั่งซื้อและข้อมูลสินค้าใกล้กันมาก แต่รายละเอียดบางส่วนอาจต่างกัน จึงยังไม่ลบอัตโนมัติ</p>
+        <div class="table-wrap compact-table">
+          <table>
+            <thead><tr><th>คำสั่งซื้อ</th><th>สินค้า</th><th class="num">จำนวนที่พบ</th><th>แถวไฟล์</th><th>กำไรในกลุ่ม</th></tr></thead>
+            <tbody>${suspiciousRows}</tbody>
+          </table>
+        </div>
+      </section>
+    ` : ""}
+  `;
+}
+
+function removeSafeDuplicateSales() {
+  const analysis = analyzeDuplicateSales(state.activePlatform);
+  if (!analysis.removableCount) {
+    showToast("ไม่มีรายการซ้ำที่ลบได้อย่างปลอดภัย");
+    return;
+  }
+  const ok = confirm(`ลบรายการขายซ้ำ ${analysis.removableCount.toLocaleString("th-TH")} รายการ?\n\nระบบจะเก็บรายการแรกของแต่ละกลุ่มไว้ และลบเฉพาะสำเนาที่เหมือนกันจริง`);
+  if (!ok) return;
+  state.sales = state.sales.filter((sale) => !analysis.removableIds.has(sale.id));
+  state.selectedSales.clear();
+  el.duplicatesDialog.close();
+  renderAll();
+  showToast(`ลบรายการซ้ำแล้ว ${analysis.removableCount.toLocaleString("th-TH")} รายการ`);
 }
 
 function exportProducts() {
@@ -2057,7 +2357,7 @@ function exportSales() {
     return;
   }
   const data = [
-    ["วันที่", "แพลตฟอร์ม", "คำสั่งซื้อ", "สถานะคำสั่งซื้อ", "สถานะคืนเงิน/คืนสินค้า", "ชื่อสินค้า", "ตัวเลือก", "จำนวน", "ราคาขาย/ชิ้น", "ยอดขาย", "ค่าคอมมิชชั่น", "Transaction Fee", "ค่าบริการ", "รวมค่าธรรมเนียม", "ส่วนลดผู้ขาย", "ต้นทุน", "กำไร", "% กำไร", "นับกำไร"],
+    ["วันที่ทำการสั่งซื้อ", "แพลตฟอร์ม", "คำสั่งซื้อ", "สถานะคำสั่งซื้อ", "สถานะคืนเงิน/คืนสินค้า", "ชื่อสินค้า", "ตัวเลือก", "จำนวน", "ราคาขาย/ชิ้น", "ยอดขาย", "ค่าคอมมิชชั่น", "Transaction Fee", "ค่าบริการ", "รวมค่าธรรมเนียม", "ส่วนลดผู้ขาย", "ต้นทุน", "กำไร", "% กำไร", "นับกำไร"],
     ...rows.map((sale) => [
       sale.orderDate, platformName(sale.platform), sale.orderNo, sale.orderStatus, sale.refundStatus,
       sale.productName, sale.optionName, sale.qty, sale.salePrice, sale.grossSales,
@@ -2100,7 +2400,7 @@ function drawTrendChart(canvas, rows) {
   });
 }
 
-function drawHorizontalChart(canvas, rows, unitLabel, color) {
+function drawHorizontalChart(canvas, rows, unitLabel, color, options = {}) {
   drawChart(canvas, (ctx, width, height) => {
     if (!rows.length) return drawNoData(ctx, width, height);
     const chart = { x: 130, y: 24, w: width - 160, h: height - 46 };
@@ -2110,7 +2410,11 @@ function drawHorizontalChart(canvas, rows, unitLabel, color) {
       const y = chart.y + index * rowH + 6;
       const barW = Math.abs(row.value) / max * chart.w;
       drawText(ctx, row.label, 10, y + 13, 11, "#172014");
-      ctx.fillStyle = row.value >= 0 ? color : "#c0272d";
+      const topN = options.highlightTopN || 0;
+      const barColor = row.value < 0
+        ? "#c0272d"
+        : (topN && index < topN ? (options.highlightColor || color) : (options.normalColor || color));
+      ctx.fillStyle = barColor;
       ctx.fillRect(chart.x, y, barW, Math.max(10, rowH - 12));
       drawText(ctx, `${money(row.value)} ${unitLabel}`, chart.x + barW + 6, y + 12, 10, "#63705f");
     });
@@ -2238,12 +2542,16 @@ function matchLabel(sale) {
 }
 
 function statusLabel(sale) {
-  if (sale.includedInProfit) return `<span class="status-pill ok">นับกำไร</span>`;
-  if (cleanText(sale.orderStatus) === "สำเร็จแล้ว" && !cleanText(sale.refundStatus) && !getProduct(sale.matchedCostId)) {
+  const statusMode = getSaleStatusMode(sale);
+  if (statusMode === SALE_STATUS_MODES.refund) {
+    const amountLabel = getSaleRefundAmountLabel(sale);
+    return `<span class="status-pill skip">คืนเงิน/คืนสินค้า${amountLabel ? ` ${amountLabel}` : ""}</span>`;
+  }
+  if (statusMode === SALE_STATUS_MODES.profit && sale.includedInProfit) return `<span class="status-pill ok">นับกำไร</span>`;
+  if (statusMode === SALE_STATUS_MODES.profit && !sale.includedInProfit) {
     return `<span class="status-pill skip">รอเลือกต้นทุน</span>`;
   }
-  const reason = sale.refundStatus ? "คืนเงิน/คืนสินค้า" : "สถานะไม่สำเร็จ";
-  return `<span class="status-pill skip">${escapeHtml(reason)}</span>`;
+  return `<span class="status-pill skip">สถานะไม่สำเร็จ</span>`;
 }
 
 function productThumb(product) {
@@ -2428,6 +2736,159 @@ function parseDateValue(value) {
   if (thai) return `${thai[3]}-${thai[2].padStart(2, "0")}-${thai[1].padStart(2, "0")}`;
   const date = new Date(text);
   return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+}
+
+function pad2(value) {
+  return String(value).padStart(2, "0");
+}
+
+function formatDateTimeValue(date) {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+}
+
+function parseDateTimeValue(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return formatDateTimeValue(value);
+  const text = cleanText(value);
+  if (!text) return "";
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (iso) {
+    return `${iso[1]}-${iso[2]}-${iso[3]}T${pad2(iso[4] || "00")}:${pad2(iso[5] || "00")}:${pad2(iso[6] || "00")}`;
+  }
+  const thai = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (thai) {
+    return `${thai[3]}-${pad2(thai[2])}-${pad2(thai[1])}T${pad2(thai[4] || "00")}:${pad2(thai[5] || "00")}:${pad2(thai[6] || "00")}`;
+  }
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? "" : formatDateTimeValue(date);
+}
+
+function normalizeDateTimeFromDate(value) {
+  const date = parseDateValue(value);
+  return date ? `${date}T00:00:00` : "";
+}
+
+function normalizeSaleStatusMode(value) {
+  const text = cleanText(value).toLowerCase();
+  if (!text) return "";
+  if (text === SALE_STATUS_MODES.profit || text.includes("นับกำไร") || text.includes("สำเร็จ") || text.includes("completed") || text.includes("profit")) {
+    return SALE_STATUS_MODES.profit;
+  }
+  if (text === SALE_STATUS_MODES.refund || text.includes("คืนเงิน") || text.includes("คืนสินค้า") || text.includes("refund")) {
+    return SALE_STATUS_MODES.refund;
+  }
+  if (text === SALE_STATUS_MODES.failed || text.includes("ไม่สำเร็จ") || text.includes("ยกเลิก") || text.includes("cancel") || text.includes("failed")) {
+    return SALE_STATUS_MODES.failed;
+  }
+  return "";
+}
+
+function saleStatusModeLabel(value) {
+  const mode = normalizeSaleStatusMode(value) || SALE_STATUS_MODES.profit;
+  return SALE_STATUS_MODE_LABELS[mode] || SALE_STATUS_MODE_LABELS.profit;
+}
+
+function getSaleStatusMode(sale) {
+  const fromField = normalizeSaleStatusMode(sale?.saleStatusMode);
+  if (fromField) return fromField;
+  if (cleanText(sale?.refundAdjustment) !== "") return SALE_STATUS_MODES.refund;
+  const fromStatus = normalizeSaleStatusMode(sale?.orderStatus);
+  if (fromStatus) return fromStatus;
+  const refundStatus = normalizeSaleStatusMode(sale?.refundStatus);
+  if (refundStatus === SALE_STATUS_MODES.refund) return SALE_STATUS_MODES.refund;
+  if (cleanText(sale?.refundStatus) !== "" && Math.abs(toNumber(sale.refundStatus)) > 0) return SALE_STATUS_MODES.refund;
+  if (sale?.includedInProfit) return SALE_STATUS_MODES.profit;
+  return SALE_STATUS_MODES.failed;
+}
+
+function getSaleRefundAdjustment(sale) {
+  const raw = cleanText(sale?.refundAdjustment);
+  if (raw !== "") return toNumber(raw);
+  if (getSaleStatusMode(sale) === SALE_STATUS_MODES.refund && cleanText(sale?.refundStatus) !== "") {
+    return toNumber(sale.refundStatus);
+  }
+  return 0;
+}
+
+function getSaleRefundAmountLabel(sale) {
+  const amount = getSaleRefundAdjustment(sale);
+  if (!amount) return "";
+  return `-${money(Math.abs(amount))}`;
+}
+
+function syncSaleRefundFieldVisibility() {
+  const saleRefundVisible = normalizeSaleStatusMode(el.saleStatusInput?.value) === SALE_STATUS_MODES.refund;
+  if (el.saleRefundField) el.saleRefundField.hidden = !saleRefundVisible;
+  if (el.saleRefundInput) el.saleRefundInput.required = saleRefundVisible;
+
+  const bulkRefundVisible = normalizeSaleStatusMode(el.bulkSaleStatusInput?.value) === SALE_STATUS_MODES.refund;
+  if (el.bulkSaleRefundField) el.bulkSaleRefundField.hidden = !bulkRefundVisible;
+  if (el.bulkSaleRefundInput) el.bulkSaleRefundInput.required = bulkRefundVisible;
+}
+
+function normalizeSalesSortField(value) {
+  return value === "orderAt" ? "orderAt" : "completedAt";
+}
+
+function normalizeSalesSortDirection(value) {
+  return value === "asc" ? "asc" : "desc";
+}
+
+function getSaleSortValue(sale, field) {
+  if (field === "orderAt") {
+    return cleanText(sale.orderDateTime) || normalizeDateTimeFromDate(sale.orderDate);
+  }
+  return cleanText(sale.completedDateTime)
+    || (cleanText(sale.completedDate) ? normalizeDateTimeFromDate(sale.completedDate) : "")
+    || cleanText(sale.orderDateTime)
+    || normalizeDateTimeFromDate(sale.orderDate);
+}
+
+function compareSalesForSelectedSort(a, b) {
+  const field = normalizeSalesSortField(state.salesSortField);
+  const direction = state.salesSortDirection === "asc" ? 1 : -1;
+  const left = getSaleSortValue(a, field);
+  const right = getSaleSortValue(b, field);
+  if (left && right && left !== right) return direction * left.localeCompare(right);
+  if (left && !right) return -1;
+  if (!left && right) return 1;
+  if ((a.orderNo || "") !== (b.orderNo || "")) return String(a.orderNo || "").localeCompare(String(b.orderNo || ""));
+  if ((a.productName || "") !== (b.productName || "")) return String(a.productName || "").localeCompare(String(b.productName || ""));
+  return String(a.id || "").localeCompare(String(b.id || ""));
+}
+
+function saleImportKey(sale) {
+  return saleImportKeyParts(sale, { includeTracking: true });
+}
+
+function saleImportLegacyKey(sale) {
+  return saleImportKeyParts(sale, { includeTracking: false });
+}
+
+function saleImportKeyParts(sale, { includeTracking }) {
+  const orderNo = normalizeName(sale.orderNo);
+  const trackingNo = normalizeName(sale.trackingNo).replace(/\s+/g, "");
+  if (!orderNo || !trackingNo) return "";
+  return [orderNo, trackingNo].join("::");
+}
+
+function saleDuplicateExactKey(sale) {
+  const statusMode = getSaleStatusMode(sale);
+  const baseKey = saleImportKey(sale);
+  if (!baseKey) return "";
+  return [
+    baseKey,
+    round2(toNumber(sale.grossSales)),
+    round2(toNumber(sale.sellerDiscount)),
+    round2(toNumber(sale.commissionFee)),
+    round2(toNumber(sale.transactionFee)),
+    round2(toNumber(sale.serviceFee)),
+    round2(toNumber(sale.totalFee)),
+    cleanText(sale.matchedCostId),
+    round2(toNumber(sale.totalCost)),
+    round2(toNumber(sale.profit)),
+    statusMode,
+    cleanText(sale.refundAdjustment),
+  ].join("::");
 }
 
 function money(value) {
