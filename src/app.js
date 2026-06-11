@@ -31,6 +31,7 @@ const state = {
   productImportRows: [],
   productImportHeaderRow: 0,
   productImportStartRow: 1,
+  bulkProductImageMode: "keep",
 };
 
 const el = {};
@@ -183,7 +184,8 @@ function bindElements() {
     "productDialogImageBtn", "productDialogRemoveImageBtn", "productNameInput", "productOptionInput",
     "productColorInput", "productSkuInput", "productWholesaleInput", "productPackingInput", "productTotalInput",
     "productStockInput", "productStatusInput",
-    "productBulkDialog", "productBulkForm", "bulkWholesaleInput", "bulkPackingInput",
+    "productBulkDialog", "productBulkForm", "bulkImagePreview", "bulkImageInput", "bulkImageFileBtn",
+    "bulkImageRemoveBtn", "bulkImageFileInput", "bulkWholesaleInput", "bulkPackingInput",
     "saleDialog", "saleForm", "saleDialogTitle", "salePlatformInput", "saleDateInput", "saleOrderInput",
     "saleStatusInput", "saleRefundInput", "saleProductInput", "saleOptionInput", "saleQtyInput",
     "salePriceInput", "saleCommissionInput", "saleTransactionInput", "saleServiceInput",
@@ -233,8 +235,11 @@ function bindEvents() {
   });
   el.bulkProductEditBtn.addEventListener("click", () => {
     if (!state.selectedProducts.size) return;
+    state.bulkProductImageMode = "keep";
+    el.bulkImageInput.value = "";
     el.bulkWholesaleInput.value = "";
     el.bulkPackingInput.value = "";
+    updateBulkProductImageControls();
     el.productBulkDialog.showModal();
   });
 
@@ -244,6 +249,13 @@ function bindEvents() {
   el.productDialogImageBtn.addEventListener("click", openProductDialogImagePicker);
   el.productDialogRemoveImageBtn.addEventListener("click", clearProductDialogImage);
   el.productForm.addEventListener("submit", saveProductFromForm);
+  el.bulkImageInput.addEventListener("input", () => {
+    state.bulkProductImageMode = el.bulkImageInput.value ? "set" : "keep";
+    updateBulkProductImageControls();
+  });
+  el.bulkImageFileBtn.addEventListener("click", openBulkProductDialogImagePicker);
+  el.bulkImageFileInput.addEventListener("change", saveBulkProductImageFile);
+  el.bulkImageRemoveBtn.addEventListener("click", clearBulkProductImage);
   el.productBulkForm.addEventListener("submit", saveProductBulkForm);
 
   el.stockSearch.addEventListener("input", renderStock);
@@ -1477,6 +1489,50 @@ function updateProductImageControls() {
   el.productDialogRemoveImageBtn.disabled = !imageUrl;
 }
 
+function updateBulkProductImageControls() {
+  const imageUrl = state.bulkProductImageMode === "set" ? resolveProductImageUrl(el.bulkImageInput.value) : "";
+  if (state.bulkProductImageMode === "clear") {
+    el.bulkImagePreview.innerHTML = `<span class="product-dialog-empty">จะลบรูปของรายการที่เลือก</span>`;
+  } else {
+    el.bulkImagePreview.innerHTML = imageUrl
+      ? `<img class="product-dialog-thumb" src="${escapeHtml(imageUrl)}" alt="รูปสินค้า">`
+      : `<span class="product-dialog-empty">ไม่มีรูป</span>`;
+  }
+  el.bulkImageFileBtn.textContent = imageUrl ? "เปลี่ยนรูป" : "เพิ่ม/เปลี่ยนรูป";
+  el.bulkImageRemoveBtn.disabled = state.bulkProductImageMode === "clear" && !el.bulkImageInput.value;
+}
+
+function openBulkProductDialogImagePicker() {
+  el.bulkImageFileInput.value = "";
+  el.bulkImageFileInput.click();
+}
+
+async function saveBulkProductImageFile(event) {
+  const file = event.target.files[0];
+  event.target.value = "";
+  if (!file) return;
+  if (!file.type.startsWith("image/")) {
+    showToast("กรุณาเลือกไฟล์รูปภาพ", true);
+    return;
+  }
+  try {
+    const imageUrl = await imageFileToDataUrl(file);
+    state.bulkProductImageMode = "set";
+    el.bulkImageInput.value = imageUrl;
+    updateBulkProductImageControls();
+    showToast("เพิ่มรูปใน bulk edit แล้ว");
+  } catch (error) {
+    console.error(error);
+    showToast(`เพิ่มรูปไม่สำเร็จ: ${error.message}`, true);
+  }
+}
+
+function clearBulkProductImage() {
+  state.bulkProductImageMode = "clear";
+  el.bulkImageInput.value = "";
+  updateBulkProductImageControls();
+}
+
 function removeProductImage(productId) {
   const product = getProduct(productId);
   if (!product) return;
@@ -1519,14 +1575,22 @@ function saveProductBulkForm(event) {
   event.preventDefault();
   const hasWholesale = el.bulkWholesaleInput.value !== "";
   const hasPacking = el.bulkPackingInput.value !== "";
+  const hasBulkImage = state.bulkProductImageMode === "set" && el.bulkImageInput.value !== "";
   state.products = state.products.map((product) => {
     if (!state.selectedProducts.has(product.id)) return product;
     const wholesalePrice = hasWholesale ? toNumber(el.bulkWholesaleInput.value) : product.wholesalePrice;
     const packingCost = hasPacking ? toNumber(el.bulkPackingInput.value) : product.packingCost;
-    return { ...product, wholesalePrice, packingCost, totalCost: calculateProductTotalCost(wholesalePrice, packingCost) };
+    const next = { ...product, wholesalePrice, packingCost, totalCost: calculateProductTotalCost(wholesalePrice, packingCost) };
+    if (state.bulkProductImageMode === "clear") {
+      next.imageUrl = "";
+    } else if (hasBulkImage) {
+      next.imageUrl = cleanText(el.bulkImageInput.value);
+    }
+    return next;
   });
   el.productBulkDialog.close();
   state.selectedProducts.clear();
+  state.bulkProductImageMode = "keep";
   recalculateAllSales();
   renderAll();
   showToast("แก้ไขสินค้าหลายรายการแล้ว");
