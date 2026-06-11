@@ -313,9 +313,20 @@
     <form method="dialog" id="productBulkForm">
       <h2>แก้ไขสินค้าหลายรายการ</h2>
       <div class="form-grid">
+        <div class="span-2 image-editor">
+          <div id="bulkImagePreview" class="image-preview"></div>
+          <div class="image-editor-fields">
+            <label>URL รูปภาพ <input id="bulkImageInput" placeholder="https://... หรือ assets/product-images/..."></label>
+            <div class="image-editor-actions">
+              <button id="bulkImageFileBtn" class="btn light" type="button">เพิ่ม/เปลี่ยนรูป</button>
+              <button id="bulkImageRemoveBtn" class="btn ghost" type="button">ลบรูป</button>
+            </div>
+          </div>
+        </div>
         <label>ปรับราคาส่ง <input id="bulkWholesaleInput" type="number" min="0" step="0.01" placeholder="เว้นว่างถ้าไม่แก้"></label>
         <label>ปรับค่าแพค <input id="bulkPackingInput" type="number" min="0" step="0.01" placeholder="เว้นว่างถ้าไม่แก้"></label>
       </div>
+      <input id="bulkImageFileInput" type="file" accept="image/*" hidden>
       <div class="modal-actions">
         <button class="btn ghost" type="button" data-close="productBulkDialog">ยกเลิก</button>
         <button class="btn primary" type="submit">บันทึก</button>
