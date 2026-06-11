@@ -341,12 +341,16 @@ input[readonly] {
 
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(7, minmax(130px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
 
 .kpi {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 108px;
   padding: 15px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -367,17 +371,81 @@ input[readonly] {
   font-weight: 900;
   line-height: 1.1;
   color: var(--primary);
+  word-break: break-word;
 }
 
 .kpi .value.loss {
   color: var(--loss);
 }
 
-.chart-grid {
+.kpi .meta {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.dashboard-trend-panel {
+  margin-bottom: 16px;
+}
+
+.dashboard-panels {
   display: grid;
-  grid-template-columns: 1.15fr 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 16px;
+}
+
+.dashboard-list {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.dashboard-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: linear-gradient(180deg, #fff, #f8fbf9);
+  border: 1px solid #e2ece4;
+  border-radius: 8px;
+}
+
+.dashboard-list-item .label {
+  color: #172a30;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.dashboard-list-item .value {
+  color: var(--primary);
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1.1;
+  text-align: right;
+}
+
+.dashboard-list-item .meta {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.dashboard-list-item.warn .value {
+  color: var(--accent);
+}
+
+.dashboard-list-item.danger .value {
+  color: var(--loss);
+}
+
+.issue-table-wrap table {
+  min-width: 860px;
 }
 
 .panel {
@@ -897,10 +965,10 @@ tr:hover td {
 
 @media (max-width: 1180px) {
   .kpi-grid {
-    grid-template-columns: repeat(4, minmax(130px, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .chart-grid {
+  .dashboard-panels {
     grid-template-columns: 1fr;
   }
 }

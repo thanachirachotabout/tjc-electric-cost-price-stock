@@ -70,24 +70,58 @@
 
       <div id="kpiGrid" class="kpi-grid"></div>
 
-      <div class="chart-grid">
+      <section class="panel dashboard-trend-panel">
+        <div class="panel-head split">
+          <h2>กราฟยอดขาย 7 วันล่าสุด/เดือน/ปี</h2>
+          <span id="dashTrendMeta" class="muted"></span>
+        </div>
+        <canvas id="trendChart" height="260"></canvas>
+      </section>
+
+      <div class="dashboard-panels">
         <section class="panel">
-          <div class="panel-head">
-            <h2>ยอดขายและกำไร</h2>
+          <div class="panel-head split">
+            <h2>ยอดขายรวม</h2>
+            <span id="dashSalesPanelMeta" class="muted"></span>
           </div>
-          <canvas id="trendChart" height="240"></canvas>
+          <canvas id="platformChart" height="240"></canvas>
         </section>
+
         <section class="panel">
-          <div class="panel-head">
-            <h2>กำไรตามสินค้า</h2>
+          <div class="panel-head split">
+            <h2>สินค้าขายดี</h2>
+            <span id="dashTopProductMeta" class="muted"></span>
           </div>
           <canvas id="productChart" height="240"></canvas>
         </section>
+
         <section class="panel">
-          <div class="panel-head">
-            <h2>สรุปตามแพลตฟอร์ม</h2>
+          <div class="panel-head split">
+            <h2>เคสปัญหา/เคลม สถานะ</h2>
+            <span id="dashIssueSummaryMeta" class="muted"></span>
           </div>
-          <canvas id="platformChart" height="240"></canvas>
+          <div id="issueStatusList" class="dashboard-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head split">
+            <h2>เคสปัญหา/เคลม</h2>
+            <span id="dashIssueCountMeta" class="muted"></span>
+          </div>
+          <div class="table-wrap issue-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>วันที่</th>
+                  <th>แพลตฟอร์ม</th>
+                  <th>คำสั่งซื้อ</th>
+                  <th>สินค้า</th>
+                  <th>สถานะ</th>
+                </tr>
+              </thead>
+              <tbody id="issueTable"></tbody>
+            </table>
+          </div>
         </section>
       </div>
 

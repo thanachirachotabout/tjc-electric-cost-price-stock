@@ -164,7 +164,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 function bindElements() {
   [
     "saveStatus", "cloudStatus", "cloudSettingsBtn", "dashPeriod", "dashDate", "dashProduct", "dashOrder", "dashPlatform",
-    "kpiGrid", "trendChart", "productChart", "platformChart", "dashTable", "dashCount",
+    "kpiGrid", "dashTrendMeta", "dashSalesPanelMeta", "dashTopProductMeta", "dashIssueSummaryMeta", "dashIssueCountMeta",
+    "trendChart", "productChart", "platformChart", "issueStatusList", "issueTable", "dashTable", "dashCount",
     "productSearch", "downloadProductTemplateBtn", "importProductsBtn", "exportProductsBtn", "addProductBtn", "productFile", "productImageFileInput",
     "productImportDialog", "productImportForm", "chooseProductFileBtn",
     "productImportModeStep", "productImportMapStep", "productImportSheet", "productImportHeaderRow",
@@ -1255,39 +1256,104 @@ function findProductMatch(input) {
 }
 
 function renderDashboard() {
-  const rows = getDashboardRows();
-  const totals = rows.reduce((acc, sale) => {
-    acc.orders.add(sale.orderNo || sale.id);
-    acc.grossSales += sale.grossSales;
+  const profitRows = getDashboardRows();
+  const scopeRows = getDashboardRows({ includeProfitOnly: false });
+  const profitTotals = profitRows.reduce((acc, sale) => {
     acc.totalCost += sale.totalCost;
     acc.totalFee += sale.totalFee;
     acc.sellerDiscount += sale.sellerDiscount;
     acc.profit += sale.profit;
     return acc;
-  }, { orders: new Set(), grossSales: 0, totalCost: 0, totalFee: 0, sellerDiscount: 0, profit: 0 });
-  const margin = totals.grossSales ? (totals.profit / totals.grossSales) * 100 : 0;
-  const kpis = [
-    ["ยอดขายรวม", money(totals.grossSales)],
-    ["ต้นทุนรวม", money(totals.totalCost)],
-    ["ค่าธรรมเนียมรวม", money(totals.totalFee)],
-    ["ส่วนลดผู้ขายรวม", money(totals.sellerDiscount)],
-    ["กำไรสุทธิ", money(totals.profit), totals.profit < 0],
-    ["Margin", `${formatNumber(margin)}%`, margin < 0],
-    ["จำนวนออเดอร์", totals.orders.size.toLocaleString("th-TH")],
+  }, { totalCost: 0, totalFee: 0, sellerDiscount: 0, profit: 0 });
+  const salesTotals = scopeRows.reduce((acc, sale) => {
+    acc.grossSales += sale.grossSales;
+    acc.orders.add(sale.orderNo || sale.id);
+    return acc;
+  }, { grossSales: 0, orders: new Set() });
+  const issueRows = scopeRows.filter((sale) => !sale.includedInProfit);
+  const issueCounts = issueRows.reduce((acc, sale) => {
+    if (cleanText(sale.refundStatus)) {
+      acc.refund += 1;
+      return acc;
+    }
+    if (cleanText(sale.orderStatus) === "สำเร็จแล้ว") {
+      acc.waiting += 1;
+      return acc;
+    }
+    acc.failed += 1;
+    return acc;
+  }, { failed: 0, refund: 0, waiting: 0 });
+  const orderCompletedCount = scopeRows.filter((sale) => cleanText(sale.orderStatus) === "สำเร็จแล้ว").length;
+  const orderProblemCount = scopeRows.length - orderCompletedCount;
+  const bestProduct = groupBy(scopeRows, "productName", "grossSales", 1)[0] || { label: "ยังไม่มีข้อมูล", value: 0 };
+  const issueSummaryItems = [
+    { label: "สถานะไม่สำเร็จ", value: issueCounts.failed, meta: "ออเดอร์ที่ต้องตรวจสอบ", tone: "danger" },
+    { label: "การคืนเงินหรือคืนสินค้า", value: issueCounts.refund, meta: "รายการที่มีการคืนเงิน/คืนสินค้า", tone: "warn" },
+    { label: "รอเลือกต้นทุน", value: issueCounts.waiting, meta: "สำเร็จแล้วแต่ยังไม่พบต้นทุน", tone: "warn" },
   ];
-  el.kpiGrid.innerHTML = kpis.map(([label, value, loss]) => `
+  const kpis = [
+    { label: "ยอดขายรวม", value: money(salesTotals.grossSales), meta: `${salesTotals.orders.size.toLocaleString("th-TH")} คำสั่งซื้อ` },
+    { label: "ต้นทุนรวม", value: money(profitTotals.totalCost), meta: "รวมเฉพาะรายการที่นับกำไร" },
+    { label: "ค่าธรรมเนียม", value: money(profitTotals.totalFee), meta: "ค่าคอมมิชชั่น + ค่าบริการ + ธุรกรรม" },
+    { label: "กำไรสุทธิ", value: money(profitTotals.profit), meta: `ส่วนลดผู้ขาย ${money(profitTotals.sellerDiscount)}`, loss: profitTotals.profit < 0 },
+    { label: "จำนวนคำสั่งซื้อ", value: scopeRows.length.toLocaleString("th-TH"), meta: `${salesTotals.orders.size.toLocaleString("th-TH")} เลขคำสั่งซื้อ` },
+    { label: "สินค้าขายดี", value: bestProduct.label, meta: `${money(bestProduct.value)} ยอดขาย` },
+    { label: "เคสปัญหา/เคลม สถานะ", value: `${issueCounts.failed.toLocaleString("th-TH")} ไม่สำเร็จ`, meta: `คืนเงิน/คืนสินค้า ${issueCounts.refund.toLocaleString("th-TH")} · รอเลือกต้นทุน ${issueCounts.waiting.toLocaleString("th-TH")}` },
+    { label: "สถานะการสั่งซื้อ", value: `${orderCompletedCount.toLocaleString("th-TH")} สำเร็จแล้ว`, meta: `ติดปัญหา ${orderProblemCount.toLocaleString("th-TH")} รายการ` },
+  ];
+  el.kpiGrid.innerHTML = kpis.map((item) => `
     <div class="kpi">
-      <div class="label">${label}</div>
-      <div class="value${loss ? " loss" : ""}">${value}</div>
+      <div class="label">${item.label}</div>
+      <div class="value${item.loss ? " loss" : ""}">${escapeHtml(item.value)}</div>
+      <div class="meta">${escapeHtml(item.meta)}</div>
     </div>
   `).join("");
 
-  drawTrendChart(el.trendChart, groupTrend(rows));
-  drawHorizontalChart(el.productChart, groupBy(rows, "productName", "profit", 8), "กำไร", "#216e3a");
-  drawHorizontalChart(el.platformChart, groupBy(rows, "platform", "profit", 4, platformName), "กำไร", "#1e5f98");
+  if (el.dashTrendMeta) el.dashTrendMeta.textContent = `${scopeRows.length.toLocaleString("th-TH")} รายการ`;
+  if (el.dashSalesPanelMeta) el.dashSalesPanelMeta.textContent = `${scopeRows.length.toLocaleString("th-TH")} รายการ`;
+  if (el.dashTopProductMeta) el.dashTopProductMeta.textContent = bestProduct.label;
+  if (el.dashIssueSummaryMeta) el.dashIssueSummaryMeta.textContent = `${issueRows.length.toLocaleString("th-TH")} เคส`;
+  if (el.dashIssueCountMeta) el.dashIssueCountMeta.textContent = `${issueRows.length.toLocaleString("th-TH")} รายการ`;
 
-  el.dashCount.textContent = `${rows.length.toLocaleString("th-TH")} รายการที่นับกำไร`;
-  el.dashTable.innerHTML = rows.length ? rows.slice(0, 200).map((sale) => `
+  drawTrendChart(el.trendChart, groupTrend(scopeRows));
+  drawHorizontalChart(el.platformChart, groupBy(scopeRows, "platform", "grossSales", 4, platformName), "ยอดขาย", "#1e5f98");
+  drawHorizontalChart(el.productChart, groupBy(scopeRows, "productName", "grossSales", 8), "ยอดขาย", "#216e3a");
+
+  if (el.issueStatusList) {
+    el.issueStatusList.innerHTML = issueSummaryItems.map((item) => `
+      <div class="dashboard-list-item ${item.tone || ""}">
+        <div>
+          <div class="label">${escapeHtml(item.label)}</div>
+          <div class="meta">${escapeHtml(item.meta)}</div>
+        </div>
+        <div>
+          <div class="value">${item.value.toLocaleString("th-TH")}</div>
+        </div>
+      </div>
+    `).join("");
+  }
+
+  if (el.issueTable) {
+    el.issueTable.innerHTML = issueRows.length ? issueRows
+      .sort((a, b) => String(b.orderDate || "").localeCompare(String(a.orderDate || "")))
+      .slice(0, 120)
+      .map((sale) => `
+        <tr>
+          <td>${escapeHtml(sale.orderDate || "-")}</td>
+          <td>${escapeHtml(platformName(sale.platform))}</td>
+          <td><span class="sku">${escapeHtml(sale.orderNo || "-")}</span></td>
+          <td>
+            <div class="row-title" title="${escapeHtml(sale.productName)}">${escapeHtml(sale.productName)}</div>
+            <div class="subline">${escapeHtml([sale.orderStatus, sale.refundStatus].filter(Boolean).join(" / "))}</div>
+          </td>
+          <td>${statusLabel(sale)}</td>
+        </tr>
+      `).join("")
+      : `<tr><td colspan="5"><div class="empty">ยังไม่พบเคสปัญหา/เคลมตามตัวกรองนี้</div></td></tr>`;
+  }
+
+  el.dashCount.textContent = `${profitRows.length.toLocaleString("th-TH")} รายการที่นับกำไร`;
+  el.dashTable.innerHTML = profitRows.length ? profitRows.slice(0, 200).map((sale) => `
     <tr>
       <td>${escapeHtml(sale.orderDate || "-")}</td>
       <td>${escapeHtml(platformName(sale.platform))}</td>
@@ -1302,14 +1368,14 @@ function renderDashboard() {
   `).join("") : `<tr><td colspan="9"><div class="empty">ยังไม่มีรายการขายที่นับกำไรตามตัวกรองนี้</div></td></tr>`;
 }
 
-function getDashboardRows() {
+function getDashboardRows({ includeProfitOnly = true } = {}) {
   const period = el.dashPeriod.value;
   const date = el.dashDate.value;
   const product = normalizeName(el.dashProduct.value);
   const order = normalizeName(el.dashOrder.value);
   const platform = el.dashPlatform.value;
   return state.sales.filter((sale) => {
-    if (!sale.includedInProfit) return false;
+    if (includeProfitOnly && !sale.includedInProfit) return false;
     if (platform && platform !== "all" && sale.platform !== platform) return false;
     if (product && !normalizeName(sale.productName).includes(product)) return false;
     if (order && !normalizeName(sale.orderNo).includes(order)) return false;
