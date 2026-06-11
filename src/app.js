@@ -999,7 +999,7 @@ function migrateProductRecord(product) {
     optionName: cleanText(product?.optionName),
     color: cleanText(product?.color),
     sku: cleanText(product?.sku),
-    imageUrl: resolveProductImageUrl(cleanText(product?.imageUrl)),
+    imageUrl: cleanText(product?.imageUrl),
     wholesalePrice,
     packingCost,
     totalCost: calculateProductTotalCost(wholesalePrice, packingCost),
@@ -1353,7 +1353,7 @@ function clearProductDialogImage() {
 }
 
 function updateProductImageControls() {
-  const imageUrl = cleanText(el.productImageInput.value);
+  const imageUrl = resolveProductImageUrl(el.productImageInput.value);
   el.productImagePreview.innerHTML = imageUrl
     ? `<img class="product-dialog-thumb" src="${escapeHtml(imageUrl)}" alt="รูปสินค้า">`
     : `<span class="product-dialog-empty">ไม่มีรูป</span>`;
@@ -2001,7 +2001,7 @@ function statusLabel(sale) {
 }
 
 function productThumb(product) {
-  const imageUrl = cleanText(product.imageUrl);
+  const imageUrl = resolveProductImageUrl(product.imageUrl);
   if (imageUrl) {
     return `<img class="product-thumb" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(product.productName || "สินค้า")}" loading="lazy">`;
   }
