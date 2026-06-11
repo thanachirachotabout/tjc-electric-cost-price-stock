@@ -367,10 +367,14 @@ async function loadSeedProducts() {
 
 function loadCloudConfig() {
   const embeddedConfig = window.TJC_ELECTRIC_CLOUD_CONFIG || {};
-  const raw = localStorage.getItem(CLOUD_CONFIG_KEY);
+  const raw = safeLocalStorageGet(CLOUD_CONFIG_KEY);
   try {
     const savedConfig = raw ? JSON.parse(raw) : {};
-    cloud.config = { ...cloud.config, ...embeddedConfig, ...savedConfig };
+    cloud.config = { ...cloud.config, ...savedConfig, ...embeddedConfig };
+    if (embeddedConfig.enabled) {
+      cloud.config.enabled = true;
+      safeLocalStorageSet(CLOUD_CONFIG_KEY, JSON.stringify(cloud.config));
+    }
     cloud.enabled = Boolean(cloud.config.enabled);
     updateCloudStatus(cloud.enabled ? "syncing" : "offline", cloud.enabled ? "Cloud pending" : "Local only");
   } catch (error) {
@@ -491,7 +495,7 @@ async function saveCloudSettings(event) {
     workspaceId: cleanText(el.workspaceIdInput.value) || "tjc-electric-main",
     enabled: el.cloudEnabledInput.checked,
   };
-  localStorage.setItem(CLOUD_CONFIG_KEY, JSON.stringify(cloud.config));
+  safeLocalStorageSet(CLOUD_CONFIG_KEY, JSON.stringify(cloud.config));
   el.cloudDialog.close();
   await disconnectCloud();
   if (cloud.config.enabled) {
