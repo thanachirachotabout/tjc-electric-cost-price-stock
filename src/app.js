@@ -1,6 +1,8 @@
 const STORAGE_KEY = "tjc-electric-cost-price-stock-v3";
 const CLOUD_CONFIG_KEY = "tjc-electric-cloud-config-v1";
 const CLOUD_TABLE = "app_state";
+const STATE_DB_NAME = "tjc-electric-cost-price-stock-db";
+const STATE_DB_STORE = "state";
 const SEED_PRODUCTS_URL = "data/tjc-products.json";
 const LOW_STOCK_THRESHOLD = 3;
 const VAT_RATE = 0.07;
@@ -47,6 +49,107 @@ const cloud = {
     enabled: false,
   },
 };
+let stateDbPromise = null;
+let stateSaveChain = Promise.resolve();
+
+function safeLocalStorageGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch (error) {
+    console.warn(error);
+    return "";
+  }
+}
+
+function safeLocalStorageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (error) {
+    console.warn(error);
+    return false;
+  }
+}
+
+function safeLocalStorageRemove(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
+function openStateDatabase() {
+  if (!window.indexedDB) return Promise.resolve(null);
+  if (!stateDbPromise) {
+    stateDbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(STATE_DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(STATE_DB_STORE)) {
+          db.createObjectStore(STATE_DB_STORE);
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error("เปิดฐานข้อมูลไม่สำเร็จ"));
+      request.onblocked = () => reject(new Error("ฐานข้อมูลถูกบล็อก"));
+    });
+  }
+  return stateDbPromise;
+}
+
+function idbGet(db, key) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STATE_DB_STORE, "readonly");
+    const store = tx.objectStore(STATE_DB_STORE);
+    const request = store.get(key);
+    request.onsuccess = () => resolve(request.result || "");
+    request.onerror = () => reject(request.error || new Error("อ่านข้อมูลไม่สำเร็จ"));
+  });
+}
+
+function idbSet(db, key, value) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STATE_DB_STORE, "readwrite");
+    const store = tx.objectStore(STATE_DB_STORE);
+    const request = store.put(value, key);
+    request.onerror = () => reject(request.error || new Error("บันทึกข้อมูลไม่สำเร็จ"));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || request.error || new Error("บันทึกข้อมูลไม่สำเร็จ"));
+    tx.onabort = () => reject(tx.error || request.error || new Error("บันทึกข้อมูลไม่สำเร็จ"));
+  });
+}
+
+async function readPersistedStateRaw() {
+  const db = await openStateDatabase().catch(() => null);
+  if (db) {
+    const stored = await idbGet(db, STORAGE_KEY).catch(() => "");
+    if (stored) return { raw: stored, source: "indexeddb", db };
+  }
+  const raw = safeLocalStorageGet(STORAGE_KEY);
+  return { raw, source: raw ? "localStorage" : "", db };
+}
+
+async function writePersistedStateRaw(serialized) {
+  const db = await openStateDatabase().catch(() => null);
+  if (db) {
+    try {
+      await idbSet(db, STORAGE_KEY, serialized);
+      safeLocalStorageRemove(STORAGE_KEY);
+      return "indexeddb";
+    } catch (error) {
+      console.warn(error);
+    }
+  }
+  if (safeLocalStorageSet(STORAGE_KEY, serialized)) return "localStorage";
+  throw new Error("พื้นที่จัดเก็บไม่พอ");
+}
+
+async function persistStateSnapshot(snapshot) {
+  const serialized = JSON.stringify(snapshot);
+  stateSaveChain = stateSaveChain.catch(() => {}).then(() => writePersistedStateRaw(serialized));
+  return stateSaveChain;
+}
 
 document.addEventListener("DOMContentLoaded", async () => {
   bindElements();
@@ -228,7 +331,7 @@ function setTab(tab) {
 }
 
 async function loadState() {
-  const raw = localStorage.getItem(STORAGE_KEY);
+  const { raw, source, db } = await readPersistedStateRaw();
   if (!raw) {
     await loadSeedProducts();
     return;
@@ -240,6 +343,10 @@ async function loadState() {
     state.platforms = mergePlatforms(saved.platforms);
     state.activePlatform = saved.activePlatform || "shopee";
     recalculateAllSales();
+    if (source === "localStorage" && db) {
+      await idbSet(db, STORAGE_KEY, raw).catch((error) => console.warn(error));
+      safeLocalStorageRemove(STORAGE_KEY);
+    }
   } catch (error) {
     console.warn(error);
     await loadSeedProducts();
@@ -285,8 +392,13 @@ function saveState() {
     platforms: state.platforms,
     activePlatform: state.activePlatform,
   };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   el.saveStatus.textContent = `บันทึก ${new Date().toLocaleTimeString("th-TH")}`;
+  persistStateSnapshot(data).catch((error) => {
+    console.warn(error);
+    if (!safeLocalStorageSet(STORAGE_KEY, JSON.stringify(data))) {
+      el.saveStatus.textContent = "บันทึกไม่สำเร็จ";
+    }
+  });
   queueCloudSave();
 }
 
