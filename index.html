@@ -21,6 +21,7 @@
     </div>
     <div class="header-actions">
       <span id="cloudStatus" class="cloud-status offline">Local only</span>
+      <span id="authStatusPill" class="cloud-status offline">ยังไม่ได้เข้าสู่ระบบ</span>
       <button id="cloudSettingsBtn" class="btn ghost" type="button">Cloud Sync</button>
       <span id="saveStatus" class="save-status">พร้อมใช้งาน</span>
     </div>
@@ -32,6 +33,18 @@
     <button class="tab" type="button" data-tab="sales">รายการขายและกำไร</button>
     <button class="tab" type="button" data-tab="stock">สต็อก</button>
   </nav>
+
+  <section id="accessGate" class="access-gate" hidden>
+    <div class="access-gate-card">
+      <p class="access-gate-eyebrow">Protected access</p>
+      <h2>ต้องเข้าสู่ระบบด้วยอีเมลที่ได้รับอนุญาตก่อน</h2>
+      <p id="accessGateText" class="access-gate-text">ข้อมูลต้นทุนสินค้า-ราคา รายการขายและกำไร และสต็อก จะถูกซ่อนจนกว่าจะผ่านการอนุญาต</p>
+      <div class="access-gate-actions">
+        <button id="openCloudLoginBtn" class="btn primary" type="button">เปิดหน้าล็อกอิน</button>
+        <button id="retryAuthBtn" class="btn secondary" type="button">ตรวจสิทธิ์อีกครั้ง</button>
+      </div>
+    </div>
+  </section>
 
   <main>
     <section id="dashboardTab" class="tab-panel active">
@@ -313,6 +326,8 @@
                 <th>ตัวเลือก</th>
                 <th>สี</th>
                 <th>SKU</th>
+                <th class="num">ราคาส่ง</th>
+                <th class="num">รวมต้นทุน (VAT 7%)</th>
                 <th class="num">สต็อก</th>
                 <th>สถานะ</th>
                 <th>มูลค่าต้นทุน</th>
@@ -548,22 +563,41 @@
     <form method="dialog" id="cloudForm">
       <h2>Cloud Sync ด้วย Supabase</h2>
       <p class="modal-note">กรอกค่าจาก Supabase Project เดียวกันในทุกเครื่อง และใช้ Workspace ID เดียวกันเพื่อเห็นข้อมูลชุดเดียวกันแบบ realtime.</p>
-      <div class="form-grid">
-        <label class="span-2">Supabase URL <input id="supabaseUrlInput" placeholder="https://xxxx.supabase.co"></label>
-        <label class="span-2">Anon public key <input id="supabaseAnonKeyInput" placeholder="eyJ..."></label>
-        <label>Workspace ID <input id="workspaceIdInput" placeholder="tjc-electric-main"></label>
-        <label class="checkbox-row">
-          <input id="cloudEnabledInput" type="checkbox">
-          เปิดใช้ Cloud Sync
-        </label>
+      <section class="auth-panel">
+        <div class="auth-panel-head">
+          <div>
+            <p class="auth-panel-eyebrow">Email Login</p>
+            <h3>ล็อกอินด้วยอีเมล</h3>
+            <p id="authStatusText" class="auth-status-text">ยังไม่ได้เข้าสู่ระบบ</p>
+          </div>
+          <button id="authSignOutBtn" class="btn ghost" type="button">ออกจากระบบ</button>
+        </div>
+        <div class="form-grid auth-form-grid">
+          <label class="span-2">อีเมลสำหรับเข้าสู่ระบบ
+            <input id="authEmailInput" type="email" placeholder="name@example.com">
+          </label>
+          <button id="authSendLinkBtn" class="btn secondary" type="button">ส่ง Magic Link</button>
+        </div>
+        <p class="modal-note">ระบบจะอนุญาตเฉพาะอีเมลที่ถูกเพิ่มไว้ในตาราง <code>authorized_emails</code> บน Supabase</p>
+      </section>
+      <div id="cloudSettingsPanel">
+        <div class="form-grid">
+          <label class="span-2">Supabase URL <input id="supabaseUrlInput" placeholder="https://xxxx.supabase.co"></label>
+          <label class="span-2">Anon public key <input id="supabaseAnonKeyInput" placeholder="eyJ..."></label>
+          <label>Workspace ID <input id="workspaceIdInput" placeholder="tjc-electric-main"></label>
+          <label class="checkbox-row">
+            <input id="cloudEnabledInput" type="checkbox">
+            เปิดใช้ Cloud Sync
+          </label>
+        </div>
+        <div class="cloud-actions">
+          <button id="pullCloudBtn" class="btn secondary" type="button">ดึงข้อมูลจาก Cloud</button>
+          <button id="pushCloudBtn" class="btn secondary" type="button">ส่งข้อมูลเครื่องนี้ขึ้น Cloud</button>
+        </div>
       </div>
-      <div class="cloud-actions">
-        <button id="pullCloudBtn" class="btn secondary" type="button">ดึงข้อมูลจาก Cloud</button>
-        <button id="pushCloudBtn" class="btn secondary" type="button">ส่งข้อมูลเครื่องนี้ขึ้น Cloud</button>
-      </div>
-      <div class="modal-actions">
+      <div id="cloudModalActions" class="modal-actions">
         <button class="btn ghost" type="button" data-close="cloudDialog">ยกเลิก</button>
-        <button class="btn primary" type="submit">บันทึกและเชื่อมต่อ</button>
+        <button id="cloudSaveBtn" class="btn primary" type="submit">บันทึกและเชื่อมต่อ</button>
       </div>
     </form>
   </dialog>

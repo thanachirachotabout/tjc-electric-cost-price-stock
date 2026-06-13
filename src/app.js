@@ -52,15 +52,23 @@ const el = {};
 const cloud = {
   client: null,
   channel: null,
+  authSubscription: null,
   enabled: false,
   ready: false,
   isApplyingRemote: false,
   saveTimer: null,
   pendingRepairSave: false,
+  session: null,
+  user: null,
+  authorized: false,
+  authLoading: false,
+  connecting: false,
+  authResolved: false,
   config: {
     supabaseUrl: "",
     anonKey: "",
     workspaceId: "tjc-electric-main",
+    authRedirectUrl: "",
     enabled: false,
   },
 };
@@ -170,14 +178,20 @@ document.addEventListener("DOMContentLoaded", async () => {
   bindElements();
   bindEvents();
   loadCloudConfig();
+  if (cloud.config.enabled) {
+    updateAccessGate();
+    await connectCloud({ quiet: true });
+    if (!cloud.authorized) return;
+    renderAll();
+    return;
+  }
   await loadState();
   renderAll();
-  if (cloud.config.enabled) connectCloud();
 });
 
 function bindElements() {
   [
-    "saveStatus", "cloudStatus", "cloudSettingsBtn", "dashPeriod", "dashDate", "dashProduct", "dashOrder", "dashPlatform",
+    "saveStatus", "cloudStatus", "authStatusPill", "cloudSettingsBtn", "dashPeriod", "dashDate", "dashProduct", "dashOrder", "dashPlatform",
     "kpiGrid", "dashTrendMeta", "dashSalesPanelMeta", "dashTopProductMeta", "dashIssueSummaryMeta", "dashIssueCountMeta",
     "trendChart", "productChart", "platformChart", "salesSummaryList", "issueStatusList", "issueTable", "dashTable", "dashCount",
     "productSearch", "downloadProductTemplateBtn", "importProductsBtn", "exportProductsBtn", "addProductBtn", "productFile", "productImageFileInput",
@@ -208,8 +222,11 @@ function bindElements() {
     "salesBulkDialog", "salesBulkForm", "bulkSalePlatformInput", "bulkSaleCostInput",
     "bulkSaleStatusInput", "bulkSaleRefundField", "bulkSaleRefundInput", "bulkSaleForceIncludedInput", "toast",
     "duplicatesDialog", "duplicatesForm", "duplicatesSummary", "duplicatesDetails", "removeDuplicatesBtn",
-    "cloudDialog", "cloudForm", "supabaseUrlInput", "supabaseAnonKeyInput", "workspaceIdInput",
-    "cloudEnabledInput", "pullCloudBtn", "pushCloudBtn",
+    "accessGate", "accessGateText", "openCloudLoginBtn", "retryAuthBtn",
+    "cloudDialog", "cloudForm", "cloudSettingsPanel", "cloudModalActions", "cloudSaveBtn",
+    "supabaseUrlInput", "supabaseAnonKeyInput", "workspaceIdInput",
+    "cloudEnabledInput", "pullCloudBtn", "pushCloudBtn", "authEmailInput", "authSendLinkBtn", "authSignOutBtn",
+    "authStatusText",
   ].forEach((id) => {
     el[id] = document.getElementById(id);
   });
@@ -355,9 +372,20 @@ function bindEvents() {
   el.removeDuplicatesBtn.addEventListener("click", removeSafeDuplicateSales);
 
   el.cloudSettingsBtn.addEventListener("click", openCloudSettings);
+  el.openCloudLoginBtn.addEventListener("click", openCloudSettings);
+  el.retryAuthBtn.addEventListener("click", () => {
+    if (cloud.config.enabled) connectCloud({ quiet: true });
+  });
   el.cloudForm.addEventListener("submit", saveCloudSettings);
   el.pullCloudBtn.addEventListener("click", pullCloudNow);
   el.pushCloudBtn.addEventListener("click", pushCloudNow);
+  el.authSendLinkBtn.addEventListener("click", sendMagicLink);
+  el.authSignOutBtn.addEventListener("click", signOutCloud);
+  el.authEmailInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    sendMagicLink();
+  });
 
   document.querySelectorAll("[data-close]").forEach((button) => {
     button.addEventListener("click", () => document.getElementById(button.dataset.close).close());
@@ -368,6 +396,10 @@ function bindEvents() {
 }
 
 function setTab(tab) {
+  if (isAccessLocked()) {
+    updateAccessGate();
+    return;
+  }
   document.querySelectorAll(".tab").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === tab);
   });
@@ -376,6 +408,10 @@ function setTab(tab) {
   });
   if (tab === "dashboard") renderDashboard();
   if (tab === "stock") renderStock();
+}
+
+function isAccessLocked() {
+  return Boolean(cloud.config.enabled && !cloud.authorized);
 }
 
 async function loadState() {
@@ -426,9 +462,12 @@ function loadCloudConfig() {
       safeLocalStorageSet(CLOUD_CONFIG_KEY, JSON.stringify(cloud.config));
     }
     cloud.enabled = Boolean(cloud.config.enabled);
+    renderCloudAuthState();
     updateCloudStatus(cloud.enabled ? "syncing" : "offline", cloud.enabled ? "Cloud pending" : "Local only");
   } catch (error) {
     console.warn(error);
+    updateAccessGate();
+    updateCloudSettingsVisibility();
     updateCloudStatus("offline", "Cloud config error");
   }
 }
@@ -492,6 +531,10 @@ function applyStateSnapshot(data) {
 }
 
 function renderAll() {
+  if (isAccessLocked()) {
+    updateAccessGate();
+    return;
+  }
   renderPlatformOptions();
   renderDashboard();
   renderProducts();
@@ -542,6 +585,7 @@ function openCloudSettings() {
   el.supabaseAnonKeyInput.value = cloud.config.anonKey || "";
   el.workspaceIdInput.value = cloud.config.workspaceId || "tjc-electric-main";
   el.cloudEnabledInput.checked = Boolean(cloud.config.enabled);
+  renderCloudAuthState();
   el.cloudDialog.showModal();
 }
 
@@ -552,70 +596,333 @@ async function saveCloudSettings(event) {
     anonKey: cleanText(el.supabaseAnonKeyInput.value),
     workspaceId: cleanText(el.workspaceIdInput.value) || "tjc-electric-main",
     enabled: el.cloudEnabledInput.checked,
+    authRedirectUrl: cleanText(cloud.config.authRedirectUrl || ""),
   };
   safeLocalStorageSet(CLOUD_CONFIG_KEY, JSON.stringify(cloud.config));
   el.cloudDialog.close();
   await disconnectCloud();
   if (cloud.config.enabled) {
-    await connectCloud();
+    await connectCloud({ quiet: false });
   } else {
     cloud.enabled = false;
     cloud.ready = false;
+    cloud.authorized = false;
     updateCloudStatus("offline", "Local only");
+    renderCloudAuthState();
   }
 }
 
-async function connectCloud() {
+async function connectCloud(options = {}) {
+  const quiet = Boolean(options.quiet);
   if (!cloud.config.supabaseUrl || !cloud.config.anonKey || !cloud.config.workspaceId) {
     updateCloudStatus("offline", "Cloud setup needed");
-    showToast("กรุณากรอก Supabase URL, Anon key และ Workspace ID", true);
+    if (!quiet) showToast("กรุณากรอก Supabase URL, Anon key และ Workspace ID", true);
     return;
   }
   if (!window.supabase?.createClient) {
     updateCloudStatus("offline", "Supabase CDN missing");
-    showToast("โหลด Supabase library ไม่ได้ ตรวจ internet หรือ CDN", true);
+    if (!quiet) showToast("โหลด Supabase library ไม่ได้ ตรวจ internet หรือ CDN", true);
     return;
   }
 
   updateCloudStatus("syncing", "Connecting");
   cloud.enabled = true;
-  cloud.ready = false;
-  cloud.client = window.supabase.createClient(cloud.config.supabaseUrl, cloud.config.anonKey);
-
+  cloud.connecting = true;
   try {
-    await fetchCloudSnapshot();
-    subscribeCloudRealtime();
-    cloud.ready = true;
-    updateCloudStatus("online", `Cloud: ${cloud.config.workspaceId}`);
-    if (cloud.pendingRepairSave) {
-      cloud.pendingRepairSave = false;
-      queueCloudSave();
+    if (!cloud.client) {
+      cloud.client = window.supabase.createClient(cloud.config.supabaseUrl, cloud.config.anonKey);
+      bindCloudAuthListener();
     }
-    showToast("เชื่อมต่อ Cloud Sync แล้ว");
+
+    const authorized = await refreshCloudAuthState({ quiet });
+    if (!authorized) {
+      cloud.ready = false;
+      detachCloudChannel();
+      if (!quiet && !cloud.session) showToast("กรุณาล็อกอินอีเมลก่อนใช้งาน Cloud Sync", true);
+      return;
+    }
+    await attachCloudDataConnection();
+    if (!quiet) showToast("เชื่อมต่อ Cloud Sync แล้ว");
   } catch (error) {
     console.error(error);
     cloud.ready = false;
     updateCloudStatus("offline", "Cloud error");
-    showToast(`เชื่อมต่อ Cloud ไม่สำเร็จ: ${error.message}`, true);
+    if (!quiet) showToast(`เชื่อมต่อ Cloud ไม่สำเร็จ: ${error.message}`, true);
+  } finally {
+    cloud.connecting = false;
   }
 }
 
 async function disconnectCloud() {
   window.clearTimeout(cloud.saveTimer);
   cloud.saveTimer = null;
+  cloud.connecting = false;
+  cloud.authLoading = false;
+  detachCloudChannel();
+  if (cloud.authSubscription && typeof cloud.authSubscription.unsubscribe === "function") {
+    try {
+      cloud.authSubscription.unsubscribe();
+    } catch (error) {
+      console.warn(error);
+    }
+  }
+  cloud.authSubscription = null;
+  cloud.client = null;
+  cloud.ready = false;
+  cloud.authorized = false;
+  cloud.authResolved = false;
+  cloud.session = null;
+  cloud.user = null;
+  renderCloudAuthState();
+}
+
+function detachCloudChannel() {
   if (cloud.channel && cloud.client) {
     try {
-      await cloud.client.removeChannel(cloud.channel);
+      cloud.client.removeChannel(cloud.channel);
     } catch (error) {
       console.warn(error);
     }
   }
   cloud.channel = null;
-  cloud.client = null;
+}
+
+function bindCloudAuthListener() {
+  if (!cloud.client || cloud.authSubscription) return;
+  const { data } = cloud.client.auth.onAuthStateChange((_event, session) => {
+    cloud.session = session || null;
+    cloud.user = session?.user || null;
+    void refreshCloudAuthState({ quiet: true }).then((authorized) => {
+      if (cloud.connecting) return;
+      if (!authorized) {
+        detachCloudChannel();
+        cloud.ready = false;
+        return;
+      }
+      if (cloud.enabled && cloud.config.enabled && !cloud.ready) {
+        void attachCloudDataConnection().catch((error) => {
+          console.error(error);
+          updateCloudStatus("offline", "Cloud error");
+        });
+      }
+    });
+  });
+  cloud.authSubscription = data?.subscription || null;
+}
+
+async function refreshCloudAuthState(options = {}) {
+  const quiet = Boolean(options.quiet);
+  if (!cloud.client) {
+    cloud.session = null;
+    cloud.user = null;
+    cloud.authorized = false;
+    cloud.authResolved = false;
+    renderCloudAuthState();
+    return false;
+  }
+
+  try {
+    const { data, error } = await cloud.client.auth.getSession();
+    if (error) throw error;
+    cloud.session = data?.session || null;
+    cloud.user = cloud.session?.user || null;
+    cloud.authResolved = true;
+    const email = cleanText(cloud.user?.email).toLowerCase();
+    if (!cloud.session || !email) {
+      cloud.authorized = false;
+      cloud.ready = false;
+      renderCloudAuthState();
+      updateCloudStatus("offline", cloud.config.enabled ? "ต้องล็อกอินอีเมล" : "Local only");
+      return false;
+    }
+
+    cloud.authorized = await isAuthorizedEmail(email);
+    renderCloudAuthState();
+    if (!cloud.authorized) {
+      cloud.ready = false;
+      updateCloudStatus("offline", `อีเมล ${email} ยังไม่ได้รับอนุญาต`);
+      if (!quiet) showToast(`อีเมล ${email} ยังไม่ได้รับอนุญาต`, true);
+      return false;
+    }
+
+    updateCloudStatus("syncing", `ล็อกอินแล้ว ${email}`);
+    return true;
+  } catch (error) {
+    console.error(error);
+    cloud.authorized = false;
+    cloud.ready = false;
+    cloud.authResolved = true;
+    renderCloudAuthState();
+    updateCloudStatus("offline", "ตรวจสอบการเข้าสู่ระบบไม่สำเร็จ");
+    if (!quiet) showToast(`ตรวจสอบการเข้าสู่ระบบไม่สำเร็จ: ${error.message}`, true);
+    return false;
+  }
+}
+
+async function attachCloudDataConnection() {
+  if (!cloud.client || !cloud.authorized) return false;
   cloud.ready = false;
+  await fetchCloudSnapshot();
+  subscribeCloudRealtime();
+  cloud.ready = true;
+  renderCloudAuthState();
+  updateCloudStatus("online", `Cloud: ${cloud.config.workspaceId}`);
+  if (cloud.pendingRepairSave) {
+    cloud.pendingRepairSave = false;
+    queueCloudSave();
+  }
+  return true;
+}
+
+function renderCloudAuthState() {
+  const email = cleanText(cloud.user?.email);
+  const isSignedIn = Boolean(cloud.session && email);
+  const isAuthorized = Boolean(cloud.authorized);
+  const pillText = !isSignedIn
+    ? "ยังไม่ได้เข้าสู่ระบบ"
+    : isAuthorized
+      ? `ล็อกอิน: ${email}`
+      : `รอสิทธิ์: ${email}`;
+
+  if (el.authStatusPill) {
+    el.authStatusPill.textContent = pillText;
+    el.authStatusPill.className = `cloud-status ${isAuthorized ? "online" : "offline"}`;
+  }
+  if (el.authStatusText) {
+    el.authStatusText.textContent = !isSignedIn
+      ? "ยังไม่ได้เข้าสู่ระบบ"
+      : isAuthorized
+        ? `เข้าสู่ระบบแล้ว: ${email}`
+        : `อีเมล ${email} ยังไม่ได้รับอนุญาต`;
+  }
+  if (el.authEmailInput && !cleanText(el.authEmailInput.value) && email) {
+    el.authEmailInput.value = email;
+  }
+  if (el.authSignOutBtn) {
+    el.authSignOutBtn.disabled = !isSignedIn;
+  }
+  if (el.authSendLinkBtn) {
+    el.authSendLinkBtn.disabled = cloud.authLoading || cloud.connecting;
+  }
+  if (el.pullCloudBtn) {
+    el.pullCloudBtn.disabled = !cloud.authorized || !cloud.config.enabled || !cloud.ready;
+  }
+  if (el.pushCloudBtn) {
+    el.pushCloudBtn.disabled = !cloud.authorized || !cloud.config.enabled || !cloud.ready;
+  }
+  updateAccessGate();
+  updateCloudSettingsVisibility();
+}
+
+function updateAccessGate() {
+  const locked = Boolean(cloud.config.enabled && !cloud.authorized);
+  document.body.classList.toggle("access-locked", locked);
+  if (el.accessGate) el.accessGate.hidden = !locked;
+  if (el.accessGateText) {
+    if (!cloud.authResolved && cloud.config.enabled) {
+      el.accessGateText.textContent = "กำลังตรวจสอบการเข้าสู่ระบบ...";
+    } else if (!cloud.session) {
+      el.accessGateText.textContent = "ข้อมูลทั้งหมดถูกล็อกไว้ จนกว่าจะล็อกอินด้วยอีเมลที่ได้รับอนุญาต";
+    } else if (!cloud.authorized) {
+      el.accessGateText.textContent = `อีเมล ${cleanText(cloud.user?.email)} ยังไม่ได้รับอนุญาตให้ดูข้อมูล`;
+    } else {
+      el.accessGateText.textContent = "คุณผ่านการอนุญาตแล้ว";
+    }
+  }
+  if (el.cloudSettingsBtn) {
+    el.cloudSettingsBtn.textContent = locked ? "เข้าสู่ระบบ" : "Cloud Sync";
+  }
+}
+
+function updateCloudSettingsVisibility() {
+  const locked = Boolean(cloud.config.enabled && !cloud.authorized);
+  if (el.cloudSettingsPanel) el.cloudSettingsPanel.hidden = locked;
+  if (el.cloudModalActions) {
+    el.cloudModalActions.hidden = locked;
+  }
+  if (el.cloudSaveBtn) {
+    el.cloudSaveBtn.hidden = locked;
+  }
+}
+
+function getAuthRedirectUrl() {
+  const configured = cleanText(cloud.config.authRedirectUrl);
+  if (configured) return configured;
+  if (window.location.origin && window.location.origin !== "null") {
+    return `${window.location.origin}${window.location.pathname}`;
+  }
+  return "https://thanachirachotabout.github.io/tjc-electric-cost-price-stock/";
+}
+
+async function sendMagicLink() {
+  if (!cloud.client) {
+    await connectCloud({ quiet: true });
+  }
+  if (!cloud.client) {
+    showToast("ยังไม่ได้เชื่อมต่อ Supabase", true);
+    return;
+  }
+  const email = cleanText(el.authEmailInput.value);
+  if (!email || !email.includes("@")) {
+    showToast("กรุณากรอกอีเมลให้ถูกต้อง", true);
+    return;
+  }
+
+  try {
+    cloud.authLoading = true;
+    renderCloudAuthState();
+    const { error } = await cloud.client.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: getAuthRedirectUrl() },
+    });
+    if (error) throw error;
+    showToast(`ส่ง Magic Link ไปที่ ${email} แล้ว`);
+    if (el.authStatusText) {
+      el.authStatusText.textContent = `ส่งลิงก์เข้าสู่ระบบไปที่ ${email} แล้ว กรุณาตรวจอีเมล`;
+    }
+  } catch (error) {
+    console.error(error);
+    showToast(`ส่งลิงก์เข้าสู่ระบบไม่สำเร็จ: ${error.message}`, true);
+    if (el.authStatusText) {
+      el.authStatusText.textContent = `ส่งลิงก์เข้าสู่ระบบไม่สำเร็จ: ${error.message}`;
+    }
+  } finally {
+    cloud.authLoading = false;
+    renderCloudAuthState();
+  }
+}
+
+async function signOutCloud() {
+  if (!cloud.client) {
+    renderCloudAuthState();
+    return;
+  }
+  try {
+    await cloud.client.auth.signOut();
+    cloud.authorized = false;
+    cloud.ready = false;
+    detachCloudChannel();
+    updateCloudStatus("offline", cloud.config.enabled ? "ต้องล็อกอินอีเมล" : "Local only");
+    renderCloudAuthState();
+    showToast("ออกจากระบบแล้ว");
+  } catch (error) {
+    console.error(error);
+    showToast(`ออกจากระบบไม่สำเร็จ: ${error.message}`, true);
+  }
+}
+
+async function isAuthorizedEmail(email) {
+  const cleanEmail = cleanText(email).toLowerCase();
+  if (!cleanEmail) return false;
+  const { data, error } = await cloud.client.rpc("is_authorized_email", {
+    input_email: cleanEmail,
+  });
+  if (error) throw error;
+  return Boolean(data);
 }
 
 async function fetchCloudSnapshot() {
+  if (!cloud.authorized) throw new Error("กรุณาล็อกอินอีเมลก่อน");
   const { data, error } = await cloud.client
     .from(CLOUD_TABLE)
     .select("data, updated_at")
@@ -633,6 +940,7 @@ async function fetchCloudSnapshot() {
 }
 
 function subscribeCloudRealtime() {
+  if (!cloud.authorized) return;
   if (cloud.channel && cloud.client) cloud.client.removeChannel(cloud.channel);
   cloud.channel = cloud.client
     .channel(`app-state-${cloud.config.workspaceId}`)
@@ -658,7 +966,7 @@ function subscribeCloudRealtime() {
 }
 
 function queueCloudSave() {
-  if (!cloud.enabled || !cloud.ready || !cloud.client || cloud.isApplyingRemote) return;
+  if (!cloud.enabled || !cloud.ready || !cloud.client || cloud.isApplyingRemote || !cloud.authorized) return;
   window.clearTimeout(cloud.saveTimer);
   updateCloudStatus("syncing", "Saving cloud");
   cloud.saveTimer = window.setTimeout(() => {
@@ -672,6 +980,7 @@ function queueCloudSave() {
 
 async function upsertCloudSnapshot() {
   if (!cloud.client) throw new Error("ยังไม่ได้เชื่อมต่อ Supabase");
+  if (!cloud.authorized) throw new Error("กรุณาล็อกอินอีเมลก่อน");
   const { error } = await cloud.client
     .from(CLOUD_TABLE)
     .upsert({
@@ -686,8 +995,11 @@ async function upsertCloudSnapshot() {
 
 async function pullCloudNow(options = {}) {
   const silent = Boolean(options.silent);
-  if (!cloud.client) await connectCloud();
-  if (!cloud.client) return false;
+  if (!cloud.client || !cloud.authorized) await connectCloud({ quiet: silent });
+  if (!cloud.client || !cloud.authorized) {
+    if (!silent) showToast("กรุณาล็อกอินอีเมลก่อนใช้งาน Cloud Sync", true);
+    return false;
+  }
   try {
     await fetchCloudSnapshot();
     if (!silent) showToast("ดึงข้อมูลจาก Cloud แล้ว");
@@ -720,8 +1032,8 @@ async function refreshCurrentData(tabName = "") {
 }
 
 async function pushCloudNow() {
-  if (!cloud.client) await connectCloud();
-  if (!cloud.client) return;
+  if (!cloud.client || !cloud.authorized) await connectCloud({ quiet: false });
+  if (!cloud.client || !cloud.authorized) return;
   try {
     await upsertCloudSnapshot();
     showToast("ส่งข้อมูลขึ้น Cloud แล้ว");
@@ -1832,6 +2144,8 @@ function renderStock() {
       <td>${escapeHtml(product.optionName || "-")}</td>
       <td>${escapeHtml(product.color || "-")}</td>
       <td><span class="sku">${escapeHtml(product.sku || "-")}</span></td>
+      <td class="num">${money(product.wholesalePrice)}</td>
+      <td class="num profit">${money(product.totalCost)}</td>
       <td class="num ${stockClass(product.stock)}">${formatNumber(product.stock)}</td>
       <td>${stockStatusPill(product)}</td>
       <td class="num">${money(toNumber(product.stock) * toNumber(product.totalCost))}</td>
@@ -1839,7 +2153,7 @@ function renderStock() {
         <button class="btn secondary mini" type="button" data-stock-row-edit="${escapeHtml(product.id)}">ปรับ</button>
       </div></td>
     </tr>
-  `).join("") : `<tr><td colspan="9"><div class="empty">ไม่พบสินค้าตามตัวกรองนี้</div></td></tr>`;
+  `).join("") : `<tr><td colspan="11"><div class="empty">ไม่พบสินค้าตามตัวกรองนี้</div></td></tr>`;
 
   el.stockTable.querySelectorAll("[data-stock-row-edit]").forEach((button) => {
     button.addEventListener("click", () => openStockAdjust(button.dataset.stockRowEdit));

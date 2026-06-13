@@ -161,6 +161,57 @@ h2 {
   overflow-x: auto;
 }
 
+body.access-locked .tabs,
+body.access-locked main {
+  display: none;
+}
+
+.access-gate {
+  position: relative;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  padding: 28px 24px 8px;
+}
+
+.access-gate-card {
+  width: min(720px, 100%);
+  padding: 24px;
+  background: linear-gradient(180deg, #ffffff, #edf4ff);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.access-gate-eyebrow {
+  margin: 0 0 6px;
+  color: var(--primary-2);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.access-gate h2 {
+  font-size: 24px;
+  line-height: 1.25;
+  color: var(--text);
+}
+
+.access-gate-text {
+  margin: 10px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.access-gate-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+
 .tab {
   min-height: 38px;
   padding: 0 16px;
@@ -1103,6 +1154,50 @@ tr:hover td {
   margin-top: 14px;
 }
 
+.auth-panel {
+  margin: 8px 0 18px;
+  padding: 14px;
+  background: linear-gradient(180deg, #f8fbff, #eef6ff);
+  border: 1px solid #d7e4f5;
+  border-radius: 8px;
+}
+
+.auth-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.auth-panel-eyebrow {
+  margin: 0 0 4px;
+  color: var(--primary-2);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.auth-panel h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.auth-status-text {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.auth-form-grid {
+  margin-top: 6px;
+}
+
 .modal .btn.ghost {
   color: var(--primary);
   background: #fff;
@@ -1255,8 +1350,14 @@ tr:hover td {
 
   .modal-actions .btn,
   .cloud-actions .btn,
+  .auth-panel-head .btn,
   .search-action-row .btn {
     width: 100%;
+  }
+
+  .auth-panel-head {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 
