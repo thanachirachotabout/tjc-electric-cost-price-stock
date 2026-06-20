@@ -68,7 +68,6 @@ const cloud = {
     supabaseUrl: "",
     anonKey: "",
     workspaceId: "tjc-electric-main",
-    authRedirectUrl: "",
     enabled: false,
   },
 };
@@ -225,7 +224,7 @@ function bindElements() {
     "accessGate", "accessGateText", "openCloudLoginBtn", "retryAuthBtn",
     "cloudDialog", "cloudForm", "cloudSettingsPanel", "cloudModalActions", "cloudSaveBtn",
     "supabaseUrlInput", "supabaseAnonKeyInput", "workspaceIdInput",
-    "cloudEnabledInput", "pullCloudBtn", "pushCloudBtn", "authEmailInput", "authSendLinkBtn", "authSignOutBtn",
+    "cloudEnabledInput", "pullCloudBtn", "pushCloudBtn", "authEmailInput", "authPasswordInput", "authSendLinkBtn", "authSignOutBtn",
     "authStatusText",
   ].forEach((id) => {
     el[id] = document.getElementById(id);
@@ -379,12 +378,15 @@ function bindEvents() {
   el.cloudForm.addEventListener("submit", saveCloudSettings);
   el.pullCloudBtn.addEventListener("click", pullCloudNow);
   el.pushCloudBtn.addEventListener("click", pushCloudNow);
-  el.authSendLinkBtn.addEventListener("click", sendMagicLink);
+  el.authSendLinkBtn.addEventListener("click", signInWithPassword);
   el.authSignOutBtn.addEventListener("click", signOutCloud);
-  el.authEmailInput.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    sendMagicLink();
+  [el.authEmailInput, el.authPasswordInput].forEach((input) => {
+    if (!input) return;
+    input.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      signInWithPassword();
+    });
   });
 
   document.querySelectorAll("[data-close]").forEach((button) => {
@@ -596,7 +598,6 @@ async function saveCloudSettings(event) {
     anonKey: cleanText(el.supabaseAnonKeyInput.value),
     workspaceId: cleanText(el.workspaceIdInput.value) || "tjc-electric-main",
     enabled: el.cloudEnabledInput.checked,
-    authRedirectUrl: cleanText(cloud.config.authRedirectUrl || ""),
   };
   safeLocalStorageSet(CLOUD_CONFIG_KEY, JSON.stringify(cloud.config));
   el.cloudDialog.close();
@@ -638,7 +639,7 @@ async function connectCloud(options = {}) {
     if (!authorized) {
       cloud.ready = false;
       detachCloudChannel();
-      if (!quiet && !cloud.session) showToast("กรุณาล็อกอินอีเมลก่อนใช้งาน Cloud Sync", true);
+      if (!quiet && !cloud.session) showToast("กรุณาล็อกอินด้วยอีเมลและรหัสผ่านก่อนใช้งาน Cloud Sync", true);
       return;
     }
     await attachCloudDataConnection();
@@ -732,7 +733,7 @@ async function refreshCloudAuthState(options = {}) {
       cloud.authorized = false;
       cloud.ready = false;
       renderCloudAuthState();
-      updateCloudStatus("offline", cloud.config.enabled ? "ต้องล็อกอินอีเมล" : "Local only");
+      updateCloudStatus("offline", cloud.config.enabled ? "ต้องล็อกอินด้วยอีเมลและรหัสผ่าน" : "Local only");
       return false;
     }
 
@@ -798,6 +799,9 @@ function renderCloudAuthState() {
   if (el.authEmailInput && !cleanText(el.authEmailInput.value) && email) {
     el.authEmailInput.value = email;
   }
+  if (!isSignedIn && el.authPasswordInput && !cloud.authLoading) {
+    el.authPasswordInput.value = "";
+  }
   if (el.authSignOutBtn) {
     el.authSignOutBtn.disabled = !isSignedIn;
   }
@@ -822,7 +826,7 @@ function updateAccessGate() {
     if (!cloud.authResolved && cloud.config.enabled) {
       el.accessGateText.textContent = "กำลังตรวจสอบการเข้าสู่ระบบ...";
     } else if (!cloud.session) {
-      el.accessGateText.textContent = "ข้อมูลทั้งหมดถูกล็อกไว้ จนกว่าจะล็อกอินด้วยอีเมลที่ได้รับอนุญาต";
+      el.accessGateText.textContent = "ข้อมูลทั้งหมดถูกล็อกไว้ จนกว่าจะล็อกอินด้วยอีเมลและรหัสผ่านที่ได้รับอนุญาต";
     } else if (!cloud.authorized) {
       el.accessGateText.textContent = `อีเมล ${cleanText(cloud.user?.email)} ยังไม่ได้รับอนุญาตให้ดูข้อมูล`;
     } else {
@@ -845,16 +849,7 @@ function updateCloudSettingsVisibility() {
   }
 }
 
-function getAuthRedirectUrl() {
-  const configured = cleanText(cloud.config.authRedirectUrl);
-  if (configured) return configured;
-  if (window.location.origin && window.location.origin !== "null") {
-    return `${window.location.origin}${window.location.pathname}`;
-  }
-  return "https://thanachirachotabout.github.io/tjc-electric-cost-price-stock/";
-}
-
-async function sendMagicLink() {
+async function signInWithPassword() {
   if (!cloud.client) {
     await connectCloud({ quiet: true });
   }
@@ -863,28 +858,35 @@ async function sendMagicLink() {
     return;
   }
   const email = cleanText(el.authEmailInput.value);
+  const password = String(el.authPasswordInput?.value ?? "");
   if (!email || !email.includes("@")) {
     showToast("กรุณากรอกอีเมลให้ถูกต้อง", true);
+    return;
+  }
+  if (!password) {
+    showToast("กรุณากรอกรหัสผ่าน", true);
     return;
   }
 
   try {
     cloud.authLoading = true;
     renderCloudAuthState();
-    const { error } = await cloud.client.auth.signInWithOtp({
+    const { error } = await cloud.client.auth.signInWithPassword({
       email,
-      options: { emailRedirectTo: getAuthRedirectUrl() },
+      password,
     });
     if (error) throw error;
-    showToast(`ส่ง Magic Link ไปที่ ${email} แล้ว`);
+    showToast(`เข้าสู่ระบบด้วย ${email} สำเร็จ`);
     if (el.authStatusText) {
-      el.authStatusText.textContent = `ส่งลิงก์เข้าสู่ระบบไปที่ ${email} แล้ว กรุณาตรวจอีเมล`;
+      el.authStatusText.textContent = `เข้าสู่ระบบสำเร็จ: ${email}`;
     }
+    if (el.authPasswordInput) el.authPasswordInput.value = "";
   } catch (error) {
     console.error(error);
-    showToast(`ส่งลิงก์เข้าสู่ระบบไม่สำเร็จ: ${error.message}`, true);
+    const message = error?.message || "ไม่ทราบสาเหตุ";
+    showToast(`เข้าสู่ระบบไม่สำเร็จ: ${message}`, true);
     if (el.authStatusText) {
-      el.authStatusText.textContent = `ส่งลิงก์เข้าสู่ระบบไม่สำเร็จ: ${error.message}`;
+      el.authStatusText.textContent = `เข้าสู่ระบบไม่สำเร็จ: ${message}`;
     }
   } finally {
     cloud.authLoading = false;
@@ -902,7 +904,7 @@ async function signOutCloud() {
     cloud.authorized = false;
     cloud.ready = false;
     detachCloudChannel();
-    updateCloudStatus("offline", cloud.config.enabled ? "ต้องล็อกอินอีเมล" : "Local only");
+    updateCloudStatus("offline", cloud.config.enabled ? "ต้องล็อกอินด้วยอีเมลและรหัสผ่าน" : "Local only");
     renderCloudAuthState();
     showToast("ออกจากระบบแล้ว");
   } catch (error) {
@@ -922,7 +924,7 @@ async function isAuthorizedEmail(email) {
 }
 
 async function fetchCloudSnapshot() {
-  if (!cloud.authorized) throw new Error("กรุณาล็อกอินอีเมลก่อน");
+  if (!cloud.authorized) throw new Error("กรุณาล็อกอินด้วยอีเมลและรหัสผ่านก่อน");
   const { data, error } = await cloud.client
     .from(CLOUD_TABLE)
     .select("data, updated_at")
@@ -980,7 +982,7 @@ function queueCloudSave() {
 
 async function upsertCloudSnapshot() {
   if (!cloud.client) throw new Error("ยังไม่ได้เชื่อมต่อ Supabase");
-  if (!cloud.authorized) throw new Error("กรุณาล็อกอินอีเมลก่อน");
+  if (!cloud.authorized) throw new Error("กรุณาล็อกอินด้วยอีเมลและรหัสผ่านก่อน");
   const { error } = await cloud.client
     .from(CLOUD_TABLE)
     .upsert({
@@ -997,7 +999,7 @@ async function pullCloudNow(options = {}) {
   const silent = Boolean(options.silent);
   if (!cloud.client || !cloud.authorized) await connectCloud({ quiet: silent });
   if (!cloud.client || !cloud.authorized) {
-    if (!silent) showToast("กรุณาล็อกอินอีเมลก่อนใช้งาน Cloud Sync", true);
+    if (!silent) showToast("กรุณาล็อกอินด้วยอีเมลและรหัสผ่านก่อนใช้งาน Cloud Sync", true);
     return false;
   }
   try {

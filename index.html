@@ -567,7 +567,7 @@
         <div class="auth-panel-head">
           <div>
             <p class="auth-panel-eyebrow">Email Login</p>
-            <h3>ล็อกอินด้วยอีเมล</h3>
+            <h3>ล็อกอินด้วยอีเมลและรหัสผ่าน</h3>
             <p id="authStatusText" class="auth-status-text">ยังไม่ได้เข้าสู่ระบบ</p>
           </div>
           <button id="authSignOutBtn" class="btn ghost" type="button">ออกจากระบบ</button>
@@ -576,7 +576,10 @@
           <label class="span-2">อีเมลสำหรับเข้าสู่ระบบ
             <input id="authEmailInput" type="email" placeholder="name@example.com">
           </label>
-          <button id="authSendLinkBtn" class="btn secondary" type="button">ส่ง Magic Link</button>
+          <label class="span-2">รหัสผ่าน
+            <input id="authPasswordInput" type="password" placeholder="••••••••" autocomplete="current-password">
+          </label>
+          <button id="authSendLinkBtn" class="btn secondary" type="button">เข้าสู่ระบบ</button>
         </div>
         <p class="modal-note">ระบบจะอนุญาตเฉพาะอีเมลที่ถูกเพิ่มไว้ในตาราง <code>authorized_emails</code> บน Supabase</p>
       </section>
