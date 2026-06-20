@@ -1198,6 +1198,19 @@ tr:hover td {
   margin-top: 6px;
 }
 
+.password-reset-panel {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #d7e4f5;
+}
+
+.password-reset-title {
+  margin: 0 0 4px;
+  color: var(--primary);
+  font-size: 16px;
+  font-weight: 900;
+}
+
 .modal .btn.ghost {
   color: var(--primary);
   background: #fff;

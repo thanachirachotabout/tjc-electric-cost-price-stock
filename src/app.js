@@ -64,6 +64,7 @@ const cloud = {
   authLoading: false,
   connecting: false,
   authResolved: false,
+  passwordRecovery: false,
   config: {
     supabaseUrl: "",
     anonKey: "",
@@ -224,8 +225,8 @@ function bindElements() {
     "accessGate", "accessGateText", "openCloudLoginBtn", "retryAuthBtn",
     "cloudDialog", "cloudForm", "cloudSettingsPanel", "cloudModalActions", "cloudSaveBtn",
     "supabaseUrlInput", "supabaseAnonKeyInput", "workspaceIdInput",
-    "cloudEnabledInput", "pullCloudBtn", "pushCloudBtn", "authEmailInput", "authPasswordInput", "authSendLinkBtn", "authSignOutBtn",
-    "authStatusText",
+    "cloudEnabledInput", "pullCloudBtn", "pushCloudBtn", "authLoginFields", "authEmailInput", "authPasswordInput", "authSendLinkBtn", "authSignOutBtn",
+    "authStatusText", "passwordResetPanel", "resetPasswordInput", "resetPasswordConfirmInput", "resetPasswordBtn", "cancelPasswordResetBtn",
   ].forEach((id) => {
     el[id] = document.getElementById(id);
   });
@@ -380,12 +381,22 @@ function bindEvents() {
   el.pushCloudBtn.addEventListener("click", pushCloudNow);
   el.authSendLinkBtn.addEventListener("click", signInWithPassword);
   el.authSignOutBtn.addEventListener("click", signOutCloud);
+  el.resetPasswordBtn.addEventListener("click", updatePasswordFromRecovery);
+  el.cancelPasswordResetBtn.addEventListener("click", cancelPasswordRecovery);
   [el.authEmailInput, el.authPasswordInput].forEach((input) => {
     if (!input) return;
     input.addEventListener("keydown", (event) => {
       if (event.key !== "Enter") return;
       event.preventDefault();
       signInWithPassword();
+    });
+  });
+  [el.resetPasswordInput, el.resetPasswordConfirmInput].forEach((input) => {
+    if (!input) return;
+    input.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      updatePasswordFromRecovery();
     });
   });
 
@@ -588,7 +599,7 @@ function openCloudSettings() {
   el.workspaceIdInput.value = cloud.config.workspaceId || "tjc-electric-main";
   el.cloudEnabledInput.checked = Boolean(cloud.config.enabled);
   renderCloudAuthState();
-  el.cloudDialog.showModal();
+  if (!el.cloudDialog.open) el.cloudDialog.showModal();
 }
 
 async function saveCloudSettings(event) {
@@ -632,6 +643,7 @@ async function connectCloud(options = {}) {
   try {
     if (!cloud.client) {
       cloud.client = window.supabase.createClient(cloud.config.supabaseUrl, cloud.config.anonKey);
+      if (isPasswordRecoveryUrl()) cloud.passwordRecovery = true;
       bindCloudAuthListener();
     }
 
@@ -672,6 +684,7 @@ async function disconnectCloud() {
   cloud.ready = false;
   cloud.authorized = false;
   cloud.authResolved = false;
+  cloud.passwordRecovery = false;
   cloud.session = null;
   cloud.user = null;
   renderCloudAuthState();
@@ -690,9 +703,16 @@ function detachCloudChannel() {
 
 function bindCloudAuthListener() {
   if (!cloud.client || cloud.authSubscription) return;
-  const { data } = cloud.client.auth.onAuthStateChange((_event, session) => {
+  const { data } = cloud.client.auth.onAuthStateChange((event, session) => {
     cloud.session = session || null;
     cloud.user = session?.user || null;
+    if (event === "PASSWORD_RECOVERY" || isPasswordRecoveryUrl()) {
+      cloud.passwordRecovery = true;
+      if (el.cloudDialog && !el.cloudDialog.open) openCloudSettings();
+      if (el.authStatusText) {
+        el.authStatusText.textContent = "กรุณาตั้งรหัสผ่านใหม่";
+      }
+    }
     void refreshCloudAuthState({ quiet: true }).then((authorized) => {
       if (cloud.connecting) return;
       if (!authorized) {
@@ -779,6 +799,7 @@ function renderCloudAuthState() {
   const email = cleanText(cloud.user?.email);
   const isSignedIn = Boolean(cloud.session && email);
   const isAuthorized = Boolean(cloud.authorized);
+  const isRecoveringPassword = Boolean(cloud.passwordRecovery);
   const pillText = !isSignedIn
     ? "ยังไม่ได้เข้าสู่ระบบ"
     : isAuthorized
@@ -790,11 +811,19 @@ function renderCloudAuthState() {
     el.authStatusPill.className = `cloud-status ${isAuthorized ? "online" : "offline"}`;
   }
   if (el.authStatusText) {
-    el.authStatusText.textContent = !isSignedIn
+    el.authStatusText.textContent = isRecoveringPassword
+      ? "กรุณาตั้งรหัสผ่านใหม่"
+      : !isSignedIn
       ? "ยังไม่ได้เข้าสู่ระบบ"
       : isAuthorized
         ? `เข้าสู่ระบบแล้ว: ${email}`
         : `อีเมล ${email} ยังไม่ได้รับอนุญาต`;
+  }
+  if (el.authLoginFields) {
+    el.authLoginFields.hidden = isRecoveringPassword;
+  }
+  if (el.passwordResetPanel) {
+    el.passwordResetPanel.hidden = !isRecoveringPassword;
   }
   if (el.authEmailInput && !cleanText(el.authEmailInput.value) && email) {
     el.authEmailInput.value = email;
@@ -807,6 +836,9 @@ function renderCloudAuthState() {
   }
   if (el.authSendLinkBtn) {
     el.authSendLinkBtn.disabled = cloud.authLoading || cloud.connecting;
+  }
+  if (el.resetPasswordBtn) {
+    el.resetPasswordBtn.disabled = cloud.authLoading || cloud.connecting;
   }
   if (el.pullCloudBtn) {
     el.pullCloudBtn.disabled = !cloud.authorized || !cloud.config.enabled || !cloud.ready;
@@ -892,6 +924,77 @@ async function signInWithPassword() {
     cloud.authLoading = false;
     renderCloudAuthState();
   }
+}
+
+async function updatePasswordFromRecovery() {
+  if (!cloud.client) {
+    await connectCloud({ quiet: true });
+  }
+  if (!cloud.client) {
+    showToast("ยังไม่ได้เชื่อมต่อ Supabase", true);
+    return;
+  }
+
+  const password = String(el.resetPasswordInput?.value ?? "");
+  const confirmPassword = String(el.resetPasswordConfirmInput?.value ?? "");
+  if (password.length < 6) {
+    showToast("รหัสผ่านใหม่ต้องมีอย่างน้อย 6 ตัวอักษร", true);
+    return;
+  }
+  if (password !== confirmPassword) {
+    showToast("รหัสผ่านใหม่และยืนยันรหัสผ่านไม่ตรงกัน", true);
+    return;
+  }
+
+  try {
+    cloud.authLoading = true;
+    renderCloudAuthState();
+    const { data: sessionData, error: sessionError } = await cloud.client.auth.getSession();
+    if (sessionError) throw sessionError;
+    if (!sessionData?.session) {
+      throw new Error("ลิงก์รีเซ็ตรหัสผ่านหมดอายุหรือไม่ถูกต้อง กรุณาส่งอีเมลรีเซ็ตรหัสผ่านใหม่");
+    }
+    const { error } = await cloud.client.auth.updateUser({ password });
+    if (error) throw error;
+    cloud.passwordRecovery = false;
+    if (el.resetPasswordInput) el.resetPasswordInput.value = "";
+    if (el.resetPasswordConfirmInput) el.resetPasswordConfirmInput.value = "";
+    clearPasswordRecoveryUrl();
+    showToast("ตั้งรหัสผ่านใหม่สำเร็จ");
+    const authorized = await refreshCloudAuthState({ quiet: false });
+    if (authorized && cloud.enabled && cloud.config.enabled && !cloud.ready) {
+      await attachCloudDataConnection();
+    }
+  } catch (error) {
+    console.error(error);
+    const message = error?.message || "ไม่ทราบสาเหตุ";
+    showToast(`ตั้งรหัสผ่านใหม่ไม่สำเร็จ: ${message}`, true);
+    if (el.authStatusText) {
+      el.authStatusText.textContent = `ตั้งรหัสผ่านใหม่ไม่สำเร็จ: ${message}`;
+    }
+  } finally {
+    cloud.authLoading = false;
+    renderCloudAuthState();
+  }
+}
+
+function cancelPasswordRecovery() {
+  cloud.passwordRecovery = false;
+  if (el.resetPasswordInput) el.resetPasswordInput.value = "";
+  if (el.resetPasswordConfirmInput) el.resetPasswordConfirmInput.value = "";
+  clearPasswordRecoveryUrl();
+  renderCloudAuthState();
+}
+
+function isPasswordRecoveryUrl() {
+  const hash = window.location.hash || "";
+  return hash.includes("type=recovery") || hash.includes("type=invite");
+}
+
+function clearPasswordRecoveryUrl() {
+  if (!window.location.hash) return;
+  const cleanUrl = `${window.location.pathname}${window.location.search}`;
+  window.history.replaceState(null, "", cleanUrl);
 }
 
 async function signOutCloud() {

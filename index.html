@@ -572,16 +572,32 @@
           </div>
           <button id="authSignOutBtn" class="btn ghost" type="button">ออกจากระบบ</button>
         </div>
-        <div class="form-grid auth-form-grid">
-          <label class="span-2">อีเมลสำหรับเข้าสู่ระบบ
-            <input id="authEmailInput" type="email" placeholder="name@example.com">
-          </label>
-          <label class="span-2">รหัสผ่าน
-            <input id="authPasswordInput" type="password" placeholder="••••••••" autocomplete="current-password">
-          </label>
-          <button id="authSendLinkBtn" class="btn secondary" type="button">เข้าสู่ระบบ</button>
+        <div id="authLoginFields">
+          <div class="form-grid auth-form-grid">
+            <label class="span-2">อีเมลสำหรับเข้าสู่ระบบ
+              <input id="authEmailInput" type="email" placeholder="name@example.com">
+            </label>
+            <label class="span-2">รหัสผ่าน
+              <input id="authPasswordInput" type="password" placeholder="••••••••" autocomplete="current-password">
+            </label>
+            <button id="authSendLinkBtn" class="btn secondary" type="button">เข้าสู่ระบบ</button>
+          </div>
+          <p class="modal-note">ระบบจะอนุญาตเฉพาะอีเมลที่ถูกเพิ่มไว้ในตาราง <code>authorized_emails</code> บน Supabase</p>
         </div>
-        <p class="modal-note">ระบบจะอนุญาตเฉพาะอีเมลที่ถูกเพิ่มไว้ในตาราง <code>authorized_emails</code> บน Supabase</p>
+        <div id="passwordResetPanel" class="password-reset-panel" hidden>
+          <p class="password-reset-title">ตั้งรหัสผ่านใหม่</p>
+          <p class="modal-note">กรอกรหัสผ่านใหม่จากลิงก์ Reset password ที่ส่งจาก Supabase แล้วกดบันทึก</p>
+          <div class="form-grid auth-form-grid">
+            <label class="span-2">รหัสผ่านใหม่
+              <input id="resetPasswordInput" type="password" minlength="6" placeholder="อย่างน้อย 6 ตัวอักษร" autocomplete="new-password">
+            </label>
+            <label class="span-2">ยืนยันรหัสผ่านใหม่
+              <input id="resetPasswordConfirmInput" type="password" minlength="6" placeholder="พิมพ์รหัสผ่านใหม่อีกครั้ง" autocomplete="new-password">
+            </label>
+            <button id="resetPasswordBtn" class="btn secondary" type="button">บันทึกรหัสผ่านใหม่</button>
+            <button id="cancelPasswordResetBtn" class="btn ghost" type="button">กลับไปหน้าเข้าสู่ระบบ</button>
+          </div>
+        </div>
       </section>
       <div id="cloudSettingsPanel">
         <div class="form-grid">
@@ -606,6 +622,6 @@
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="src/app.js?v=20260611c"></script>
+  <script src="src/app.js?v=20260620b"></script>
 </body>
 </html>
